@@ -1,14 +1,21 @@
 import logging
 import os
-import sys
-from typing import Dict, Optional
 import re
+import sys
+from typing import Dict
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 # Configure logging
 DEBUG_MODE = os.environ.get("DEBUG", "").lower() in ("true", "1", "yes", "on")
+DEBUG_FILE = os.environ.get("DEBUG_FILE", "")
+if DEBUG_FILE:
+    if os.path.exists(DEBUG_FILE):
+        DEBUG_MODE = True
+if DEBUG_MODE and not DEBUG_FILE:
+    DEBUG_FILE = "/tmp/slack-bot-debug.log"
+
 LOG_LEVEL = logging.DEBUG if DEBUG_MODE else logging.INFO
 
 logging.basicConfig(
@@ -16,7 +23,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("slack-bot.log") if DEBUG_MODE else logging.NullHandler(),
+        logging.FileHandler(DEBUG_FILE) if DEBUG_MODE else logging.NullHandler(),
     ],
 )
 
@@ -318,7 +325,7 @@ class SlackThreadBot:
             logger.info("🚀 Bot is starting...")
             logger.info(f"📝 Send '{self.KEYWORD}' in any Slack channel to test!")
             logger.info("🐛 All messages will be logged in debug mode")
-            logger.info(f"💾 User display names will be cached to improve performance")
+            logger.info("💾 User display names will be cached to improve performance")
             handler.start()
 
         except KeyboardInterrupt:
