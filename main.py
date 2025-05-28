@@ -59,8 +59,13 @@ class SlackThreadBot:
             f"Received {self.KEYWORD} command from user {message.get('user', 'Unknown')}"
         )
 
+        # Only process if the command is sent within a thread
+        if not message.get("thread_ts"):
+            logger.info("Command not sent in a thread, ignoring")
+            return
+
         try:
-            thread_ts = message.get("thread_ts") or message["ts"]
+            thread_ts = message.get("thread_ts")
             channel = message["channel"]
 
             if DEBUG_MODE:
@@ -83,24 +88,86 @@ class SlackThreadBot:
                 say("❌ No messages found in this thread.")
                 return
 
+            # Filter out the command message itself
+            filtered_messages = []
+            for msg in messages:
+                text = msg.get("text", "")
+                # Skip messages that contain only the keyword or start with the keyword
+                if text.strip() == self.KEYWORD or text.strip().startswith(
+                    f"{self.KEYWORD} "
+                ):
+                    if DEBUG_MODE:
+                        logger.debug(f"Filtering out command message: {text}")
+                    continue
+                filtered_messages.append(msg)
+
+            if not filtered_messages:
+                logger.warning("No messages found in thread after filtering command")
+                say("❌ No conversation found in this thread (only command message).")
+                return
+
             # Format messages into prompt
-            prompt = self.format_thread_as_prompt(messages, client)
+            prompt = self.format_thread_as_prompt(filtered_messages, client)
 
             if DEBUG_MODE:
                 logger.debug(f"Formatted prompt length: {len(prompt)} characters")
 
-            # Send formatted prompt back
-            response = f"```\n{prompt}\n```\nCopy the text above ☝️"
+            # Send as snippet to direct message
+            user_id = message.get("user")
+            if user_id:
+                try:
+                    # Open a DM channel with the user
+                    dm_response = client.conversations_open(users=user_id)
+                    dm_channel = dm_response["channel"]["id"]
 
-            if DEBUG_MODE:
-                logger.debug(f"Sending response: {response[:100]}...")
+                    # Create filename with timestamp for uniqueness
+                    import datetime
 
-            # Reply in the same thread if the command was sent in a thread
-            if message.get("thread_ts"):
-                say(response, thread_ts=message.get("thread_ts"))
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"thread_conversation_{timestamp}.txt"
+
+                    # Send as a snippet/file upload
+                    client.files_upload_v2(
+                        channel=dm_channel,
+                        content=prompt,
+                        filename=filename,
+                        title="Thread Conversation",
+                        snippet_type="text",
+                        initial_comment="📋 Here's your thread conversation as a snippet - click to expand and copy all text!",
+                    )
+
+                    # Acknowledge in the original channel with a brief message
+                    acknowledgment = (
+                        "✅ Thread copied! Check your DMs for an easy-to-copy snippet."
+                    )
+                    if message.get("thread_ts"):
+                        say(acknowledgment, thread_ts=message.get("thread_ts"))
+                    else:
+                        say(acknowledgment, thread_ts=message["ts"])
+
+                    logger.info(
+                        f"Successfully sent thread snippet to user {user_id} via DM"
+                    )
+
+                except Exception as dm_error:
+                    logger.warning(
+                        f"Failed to send snippet to user {user_id}: {dm_error}"
+                    )
+                    # Fallback to channel reply with code blocks
+                    fallback_response = f"*Thread Conversation:*\n```\n{prompt}\n```\n\n*Copy the text above ☝️*"
+                    if message.get("thread_ts"):
+                        say(fallback_response, thread_ts=message.get("thread_ts"))
+                    else:
+                        say(fallback_response, thread_ts=message["ts"])
+                    logger.info("Fallback: sent response in channel with code blocks")
             else:
-                # If the command was not in a thread, create a thread by replying to the original message
-                say(response, thread_ts=message["ts"])
+                logger.warning("No user ID found in message, sending to channel")
+                # Fallback to channel reply with code blocks
+                fallback_response = f"*Thread Conversation:*\n```\n{prompt}\n```\n\n*Copy the text above ☝️*"
+                if message.get("thread_ts"):
+                    say(fallback_response, thread_ts=message.get("thread_ts"))
+                else:
+                    say(fallback_response, thread_ts=message["ts"])
 
             logger.info("Successfully processed thread copy command")
 
