@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import re
@@ -56,9 +57,9 @@ class SlackThreadBot:
             self.handle_copy_thread(message, say, client)
 
         @self.app.event("message")
-        def handle_message_events(body, logger):
+        def handle_message_events(body):
             if DEBUG_MODE:
-                logger.debug(f"Received message event: {body}")
+                logger.debug("Received message event: %s", body)
 
     def handle_copy_thread(self, message, say, client):
         """Handle the !copyt command to copy thread conversations"""
@@ -68,7 +69,10 @@ class SlackThreadBot:
         else:
             display_name = "Unknown"
         logger.info(
-            f"Received {self.KEYWORD} command from user {display_name} (ID: {user})"
+            "Received %s command from user %s (ID: %s)",
+            self.KEYWORD,
+            display_name,
+            user,
         )
 
         # Only process if the command is sent within a thread
@@ -82,16 +86,16 @@ class SlackThreadBot:
 
             if DEBUG_MODE:
                 logger.debug(
-                    f"Processing thread with ts: {thread_ts} in channel: {channel}"
+                    "Processing thread with ts: %s in channel: %s", thread_ts, channel
                 )
-                logger.debug(f"Original message: {message}")
+                logger.debug("Original message: %s", message)
 
             # Get all replies in the thread
             result = client.conversations_replies(channel=channel, ts=thread_ts)
 
             if DEBUG_MODE:
                 logger.debug(
-                    f"Retrieved {len(result.get('messages', []))} messages from thread"
+                    "Retrieved %d messages from thread", len(result.get("messages", []))
                 )
 
             messages = result.get("messages", [])
@@ -109,7 +113,7 @@ class SlackThreadBot:
                     f"{self.KEYWORD} "
                 ):
                     if DEBUG_MODE:
-                        logger.debug(f"Filtering out command message: {text}")
+                        logger.debug("Filtering out command message: %s", text)
                     continue
                 filtered_messages.append(msg)
 
@@ -122,7 +126,7 @@ class SlackThreadBot:
             prompt = self.format_thread_as_prompt(filtered_messages, client)
 
             if DEBUG_MODE:
-                logger.debug(f"Formatted prompt length: {len(prompt)} characters")
+                logger.debug("Formatted prompt length: %d characters", len(prompt))
 
             # Send as snippet to direct message
             user_id = message.get("user")
@@ -134,8 +138,6 @@ class SlackThreadBot:
                     dm_channel = dm_response["channel"]["id"]
 
                     # Create filename with timestamp for uniqueness
-                    import datetime
-
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"thread_conversation_{timestamp}.txt"
 
@@ -159,12 +161,16 @@ class SlackThreadBot:
                         say(acknowledgment, thread_ts=message["ts"])
 
                     logger.info(
-                        f"Successfully sent thread snippet to user {display_name} via DM"
+                        "Successfully sent thread snippet to user %s via DM",
+                        display_name,
                     )
 
                 except Exception as dm_error:
                     logger.warning(
-                        f"Failed to send snippet to user {display_name} id: {user_id}: {dm_error}"
+                        "Failed to send snippet to user %s id: %s: %s",
+                        display_name,
+                        user_id,
+                        dm_error,
                     )
             else:
                 logger.warning("No user ID found in message")
@@ -185,7 +191,9 @@ class SlackThreadBot:
         if user_id in self.user_cache:
             if DEBUG_MODE:
                 logger.debug(
-                    f"Using cached display name for user {user_id}: {self.user_cache[user_id]}"
+                    "Using cached display name for user %s: %s",
+                    user_id,
+                    self.user_cache[user_id],
                 )
             return self.user_cache[user_id]
 
@@ -207,14 +215,16 @@ class SlackThreadBot:
 
             if DEBUG_MODE:
                 logger.debug(
-                    f"Resolved and cached user {user_id} to display name: {display_name}"
+                    "Resolved and cached user %s to display name: %s",
+                    user_id,
+                    display_name,
                 )
 
             return display_name
 
         except Exception as e:
             if DEBUG_MODE:
-                logger.debug(f"Failed to get user info for {user_id}: {e}")
+                logger.debug("Failed to get user info for %s: %s", user_id, e)
 
             # Cache the fallback too to avoid repeated API calls
             fallback_name = f"User {user_id}"
@@ -223,7 +233,7 @@ class SlackThreadBot:
 
     def format_thread_as_prompt(self, messages, client) -> str:
         """Format thread messages into a readable prompt"""
-        logger.debug(f"Formatting {len(messages)} messages into prompt")
+        logger.debug("Formatting %d messages into prompt", len(messages))
         formatted = []
 
         for i, msg in enumerate(messages):
@@ -235,7 +245,11 @@ class SlackThreadBot:
 
             if DEBUG_MODE:
                 logger.debug(
-                    f"Processing message {i + 1}: user_id={user_id}, display_name={display_name}, text_length={len(text)}"
+                    "Processing message %d: user_id=%s, display_name=%s, text_length=%d",
+                    i + 1,
+                    user_id,
+                    display_name,
+                    len(text),
                 )
 
             # Clean up Slack formatting
@@ -244,14 +258,14 @@ class SlackThreadBot:
 
         result = "\n\n".join(formatted)
         logger.debug(
-            f"Formatted prompt completed, total length: {len(result)} characters"
+            "Formatted prompt completed, total length: %d characters", len(result)
         )
         return result
 
     def clean_slack_text(self, text: str) -> str:
         """Remove Slack-specific formatting from text"""
         if DEBUG_MODE:
-            logger.debug(f"Cleaning text: {text[:100]}...")
+            logger.debug("Cleaning text: %s...", text[:100])
 
         original_text = text
         text = re.sub(r"<@[UW][A-Z0-9]+>", "[User]", text)  # User mentions
@@ -260,7 +274,7 @@ class SlackThreadBot:
         text = re.sub(r"<([^>]+)>", r"\1", text)  # Plain links
 
         if DEBUG_MODE and text != original_text:
-            logger.debug(f"Text cleaned: '{original_text}' -> '{text}'")
+            logger.debug("Text cleaned: '%s' -> '%s'", original_text, text)
 
         return text
 
@@ -275,7 +289,7 @@ class SlackThreadBot:
 
         if missing_vars:
             logger.error(
-                f"Missing required environment variables: {', '.join(missing_vars)}"
+                "Missing required environment variables: %s", ", ".join(missing_vars)
             )
             return False
 
@@ -293,7 +307,7 @@ class SlackThreadBot:
                 value = os.environ.get(key, "Not set")
                 if "TOKEN" in key and value != "Not set":
                     value = f"{value[:10]}..." if len(value) > 10 else value
-                logger.debug(f"  {key}: {value}")
+                logger.debug("  %s: %s", key, value)
 
         if not self.validate_environment():
             logger.error("Environment validation failed. Exiting.")
@@ -304,17 +318,17 @@ class SlackThreadBot:
             try:
                 test_response = self.app.client.auth_test()
                 logger.info(
-                    f"✅ Bot authenticated as: {test_response.get('user', 'Unknown')}"
+                    "✅ Bot authenticated as: %s", test_response.get("user", "Unknown")
                 )
-                logger.info(f"✅ Team: {test_response.get('team', 'Unknown')}")
+                logger.info("✅ Team: %s", test_response.get("team", "Unknown"))
             except Exception as e:
-                logger.error(f"❌ Bot token authentication failed: {e}")
+                logger.error("❌ Bot token authentication failed: %s", e)
                 raise
 
             handler = SocketModeHandler(self.app, self.app_token)
             logger.info("Socket mode handler created successfully")
             logger.info("🚀 Bot is starting...")
-            logger.info(f"📝 Send '{self.KEYWORD}' in any Slack channel to test!")
+            logger.info("📝 Send '%s' in any Slack channel to test!", self.KEYWORD)
             logger.info("🐛 All messages will be logged in debug mode")
             logger.info("💾 User display names will be cached to improve performance")
             handler.start()
@@ -322,7 +336,7 @@ class SlackThreadBot:
         except KeyboardInterrupt:
             logger.info("Bot stopped by user")
         except Exception as e:
-            logger.error(f"Failed to start bot: {str(e)}", exc_info=DEBUG_MODE)
+            logger.error("Failed to start bot: %s", str(e), exc_info=DEBUG_MODE)
             sys.exit(1)
 
 
