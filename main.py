@@ -62,8 +62,13 @@ class SlackThreadBot:
 
     def handle_copy_thread(self, message, say, client):
         """Handle the !copyt command to copy thread conversations"""
+        user = message.get("user")
+        if user:
+            display_name = self.get_user_display_name(client, user)
+        else:
+            display_name = "Unknown"
         logger.info(
-            f"Received {self.KEYWORD} command from user {message.get('user', 'Unknown')}"
+            f"Received {self.KEYWORD} command from user {display_name} (ID: {user})"
         )
 
         # Only process if the command is sent within a thread
@@ -122,6 +127,7 @@ class SlackThreadBot:
             # Send as snippet to direct message
             user_id = message.get("user")
             if user_id:
+                display_name = self.get_user_display_name(client, user_id)
                 try:
                     # Open a DM channel with the user
                     dm_response = client.conversations_open(users=user_id)
@@ -153,30 +159,15 @@ class SlackThreadBot:
                         say(acknowledgment, thread_ts=message["ts"])
 
                     logger.info(
-                        f"Successfully sent thread snippet to user {user_id} via DM"
+                        f"Successfully sent thread snippet to user {display_name} via DM"
                     )
 
                 except Exception as dm_error:
                     logger.warning(
-                        f"Failed to send snippet to user {user_id}: {dm_error}"
+                        f"Failed to send snippet to user {display_name} id: {user_id}: {dm_error}"
                     )
-                    # Fallback to channel reply with code blocks
-                    fallback_response = f"*Thread Conversation:*\n```\n{prompt}\n```\n\n*Copy the text above ☝️*"
-                    if message.get("thread_ts"):
-                        say(fallback_response, thread_ts=message.get("thread_ts"))
-                    else:
-                        say(fallback_response, thread_ts=message["ts"])
-                    logger.info("Fallback: sent response in channel with code blocks")
             else:
-                logger.warning("No user ID found in message, sending to channel")
-                # Fallback to channel reply with code blocks
-                fallback_response = f"*Thread Conversation:*\n```\n{prompt}\n```\n\n*Copy the text above ☝️*"
-                if message.get("thread_ts"):
-                    say(fallback_response, thread_ts=message.get("thread_ts"))
-                else:
-                    say(fallback_response, thread_ts=message["ts"])
-
-            logger.info("Successfully processed thread copy command")
+                logger.warning("No user ID found in message")
 
         except Exception as e:
             error_msg = f"Error processing thread: {str(e)}"
