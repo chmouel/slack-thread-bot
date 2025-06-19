@@ -5,6 +5,7 @@ import re
 import sys
 from typing import Dict
 
+import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -35,6 +36,7 @@ class SlackThreadBot:
     """A Slack bot that copies thread conversations and formats them for easy sharing."""
 
     KEYWORD = "!copyt"  # Command to trigger thread copying
+    GENSTORY_KEYWORD = "!genstory"  # Command to trigger Jira story generation
 
     def __init__(self, bot_token: str, app_token: str):
         self.bot_token = bot_token
@@ -55,6 +57,10 @@ class SlackThreadBot:
         @self.app.message(self.KEYWORD)
         def copy_thread_handler(message, say, client):
             self.handle_copy_thread(message, say, client)
+
+        @self.app.message(self.GENSTORY_KEYWORD)
+        def genstory_handler(message, say, client):
+            self.handle_genstory(message, say, client)
 
         @self.app.event("message")
         def handle_message_events(body):
@@ -262,6 +268,166 @@ class SlackThreadBot:
         )
         return result
 
+    def handle_genstory(self, message, say, client):
+        """Handle the !genstory command to generate a Jira story from thread"""
+        user = message.get("user")
+        if user:
+            display_name = self.get_user_display_name(client, user)
+        else:
+            display_name = "Unknown"
+        logger.info(
+            "Received %s command from user %s (ID: %s)",
+            self.GENSTORY_KEYWORD,
+            display_name,
+            user,
+        )
+
+        if not message.get("thread_ts"):
+            logger.info("Command not sent in a thread, ignoring")
+            return
+
+        try:
+            thread_ts = message.get("thread_ts")
+            channel = message["channel"]
+
+            if DEBUG_MODE:
+                logger.debug(
+                    "Processing genstory thread with ts: %s in channel: %s",
+                    thread_ts,
+                    channel,
+                )
+                logger.debug("Original message: %s", message)
+
+            # Get all replies in the thread
+            result = client.conversations_replies(channel=channel, ts=thread_ts)
+            messages = result.get("messages", [])
+            if not messages:
+                logger.warning("No messages found in thread")
+                say("❌ No messages found in this thread.")
+                return
+
+            # Filter out the command message itself
+            filtered_messages = []
+            for msg in messages:
+                text = msg.get("text", "")
+                if text.strip() == self.GENSTORY_KEYWORD or text.strip().startswith(
+                    f"{self.GENSTORY_KEYWORD} "
+                ):
+                    if DEBUG_MODE:
+                        logger.debug("Filtering out genstory command message: %s", text)
+                    continue
+                filtered_messages.append(msg)
+
+            if not filtered_messages:
+                logger.warning("No messages found in thread after filtering command")
+                say("❌ No conversation found in this thread (only command message).")
+                return
+
+            # Format messages into prompt for LLM
+            thread_text = self.format_thread_as_prompt(filtered_messages, client)
+            jira_prompt = (
+                "Given the following Slack thread conversation, generate a Jira story in Jira format. "
+                "Include a summary, description, and acceptance criteria if possible.\n\n"
+                f"Thread:\n{thread_text}\n\nJira Story:"
+            )
+            promptfile = os.path.dirname(__file__) + "/jira.prompt"
+            if os.path.exists(promptfile):
+                with open(promptfile, "r", encoding="utf8") as f:
+                    jira_prompt = f.read().strip()
+                    jira_prompt += "Thread:\n```\n" + thread_text + "\n```\n"
+
+            # Call OpenAI-compatible LLM endpoint
+            llm_response = self.call_llm(jira_prompt)
+            if not llm_response:
+                say("❌ Failed to generate Jira story from thread.")
+                return
+
+            # Send the generated Jira story as a snippet to the user via DM
+            user_id = message.get("user")
+            if user_id:
+                display_name = self.get_user_display_name(client, user_id)
+                try:
+                    dm_response = client.conversations_open(users=user_id)
+                    dm_channel = dm_response["channel"]["id"]
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"jira_story_{timestamp}.txt"
+                    client.files_upload_v2(
+                        channel=dm_channel,
+                        content=llm_response,
+                        filename=filename,
+                        title="Generated Jira Story",
+                        snippet_type="text",
+                        initial_comment="📝 Here's your generated Jira story from the thread!",
+                    )
+                    acknowledgment = (
+                        "✅ Jira story generated! Check your DMs for the result."
+                    )
+                    if message.get("thread_ts"):
+                        say(acknowledgment, thread_ts=message.get("thread_ts"))
+                    else:
+                        say(acknowledgment, thread_ts=message["ts"])
+                    logger.info(
+                        "Successfully sent Jira story to user %s via DM",
+                        display_name,
+                    )
+                except Exception as dm_error:
+                    logger.warning(
+                        "Failed to send Jira story to user %s id: %s: %s",
+                        display_name,
+                        user_id,
+                        dm_error,
+                    )
+            else:
+                logger.warning("No user ID found in message")
+
+        except Exception as e:
+            error_msg = f"Error generating Jira story: {str(e)}"
+            logger.error(error_msg, exc_info=DEBUG_MODE)
+            # say(f"❌ {error_msg}")
+            if DEBUG_MODE:
+                raise  # Re-raise in debug mode for full traceback
+
+    def call_llm(self, prompt: str) -> str | None:
+        """Call OpenAI-compatible LLM endpoint to generate Jira story"""
+
+        api_url = os.environ.get(
+            "OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"
+        )
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            logger.error("OPENAI_API_KEY environment variable not set")
+            return None
+        model = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
+        logger.info("Calling LLM endpoint: %s with model %s", api_url, model)
+        logger.info(
+            "Using prompt for LLM query:\n%s\n\n", prompt[:1000]
+        )  # Log first 1000 chars
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that writes Jira stories.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 800,
+            "temperature": 0.2,
+        }
+        try:
+            response = requests.post(api_url, headers=headers, json=data, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error("Failed to call LLM endpoint: %s", e)
+            return None
+
     def clean_slack_text(self, text: str) -> str:
         """Remove Slack-specific formatting from text"""
         if DEBUG_MODE:
@@ -329,6 +495,10 @@ class SlackThreadBot:
             logger.info("Socket mode handler created successfully")
             logger.info("🚀 Bot is starting...")
             logger.info("📝 Send '%s' in any Slack channel to test!", self.KEYWORD)
+            logger.info(
+                "🤖 Send '%s' in any Slack channel for llm story generation!",
+                self.GENSTORY_KEYWORD,
+            )
             logger.info("🐛 All messages will be logged in debug mode")
             logger.info("💾 User display names will be cached to improve performance")
             handler.start()
