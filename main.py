@@ -1,15 +1,45 @@
+import asyncio
 import datetime
 import logging
 import os
 import re
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-# Configure logging
+# MCP imports - you'll need to install the MCP Python SDK
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    logging.getLogger(__name__).warning(
+        "MCP not available - install with: pip install mcp"
+    )
+
+# ============================================================================
+# MCP SERVER CONFIGURATION - Define your MCP servers here
+# ============================================================================
+MCP_SERVERS = [
+    {
+        "name": "jayrah",
+        "command": ["jayrah", "-v", "mcp"],
+        "priority": 1,  # Lower number = higher priority
+        "enabled": True,
+    },
+]
+
+# Use MCP if available and servers are configured
+USE_MCP = MCP_AVAILABLE and any(server["enabled"] for server in MCP_SERVERS)
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
 DEBUG_MODE = os.environ.get("DEBUG", "").lower() in ("true", "1", "yes", "on")
 DEBUG_FILE = os.environ.get("DEBUG_FILE", "")
 if DEBUG_FILE:
@@ -32,6 +62,109 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class MCPManager:
+    """Manages multiple MCP server connections"""
+
+    def __init__(self):
+        self.sessions: Dict[str, ClientSession] = {}
+        self.enabled_servers = [s for s in MCP_SERVERS if s["enabled"]]
+        self.enabled_servers.sort(key=lambda x: x["priority"])  # Sort by priority
+
+    async def initialize_servers(self):
+        """Initialize all enabled MCP servers"""
+        if not USE_MCP:
+            logger.info("MCP disabled or not available")
+            return
+
+        logger.info("Initializing %d MCP servers...", len(self.enabled_servers))
+
+        for server_config in self.enabled_servers:
+            try:
+                await self._initialize_server(server_config)
+            except Exception as e:
+                logger.error(
+                    "Failed to initialize MCP server %s: %s", server_config["name"], e
+                )
+
+    async def _initialize_server(self, server_config: dict):
+        """Initialize a single MCP server"""
+        name = server_config["name"]
+        command = server_config["command"]
+
+        try:
+            server_params = StdioServerParameters(
+                command=command[0], args=command[1:] if len(command) > 1 else []
+            )
+
+            async with stdio_client(server_params) as session:
+                await session.initialize()
+
+            self.sessions[name] = session
+            logger.info("✅ MCP server '%s' initialized successfully", name)
+
+        except Exception as e:
+            logger.error("❌ Failed to initialize MCP server '%s': %s", name, e)
+
+    async def call_llm(self, prompt: str) -> Optional[str]:
+        """Call LLM using the first available MCP server"""
+        if not self.sessions:
+            logger.warning("No MCP sessions available")
+            return None
+
+        # Try servers in priority order
+        for server_config in self.enabled_servers:
+            server_name = server_config["name"]
+            session = self.sessions.get(server_name)
+
+            if not session:
+                continue
+
+            try:
+                logger.info("Calling LLM via MCP server: %s", server_name)
+
+                # Call the LLM tool - adjust tool name and parameters as needed
+                result = await session.call_tool(
+                    "call_llm",  # Tool name - adjust based on your MCP server
+                    arguments={
+                        "prompt": prompt,
+                        "system_message": "You are a helpful assistant that writes Jira stories.",
+                        "max_tokens": 800,
+                        "temperature": 0.2,
+                    },
+                )
+
+                if result.content and len(result.content) > 0:
+                    # Extract text content from the result
+                    content = result.content[0]
+                    text_response = (
+                        content.text if hasattr(content, "text") else str(content)
+                    )
+                    logger.info(
+                        "✅ LLM response received via MCP server: %s", server_name
+                    )
+                    return text_response
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to call LLM via MCP server %s: %s", server_name, e
+                )
+                continue
+
+        logger.error("All MCP servers failed to respond")
+        return None
+
+    async def cleanup(self):
+        """Clean up all MCP sessions"""
+        logger.info("Cleaning up MCP sessions...")
+        for name, session in self.sessions.items():
+            try:
+                await session.close()
+                logger.info("✅ Closed MCP session: %s", name)
+            except Exception as e:
+                logger.warning("Error closing MCP session %s: %s", name, e)
+        self.sessions.clear()
+
+
 class SlackThreadBot:
     """A Slack bot that copies thread conversations and formats them for easy sharing."""
 
@@ -42,6 +175,7 @@ class SlackThreadBot:
         self.bot_token = bot_token
         self.app_token = app_token
         self.user_cache: Dict[str, str] = {}  # Cache for user display names
+        self.mcp_manager = MCPManager() if USE_MCP else None
 
         # Initialize Slack app with debug logging
         self.app = App(token=bot_token, logger=logger if DEBUG_MODE else None)
@@ -49,7 +183,10 @@ class SlackThreadBot:
         # Register event handlers
         self._register_handlers()
 
-        logger.info("SlackThreadBot initialized")
+        logger.info(
+            "SlackThreadBot initialized with MCP: %s",
+            "enabled" if USE_MCP else "disabled",
+        )
 
     def _register_handlers(self):
         """Register all Slack event handlers"""
@@ -336,7 +473,7 @@ class SlackThreadBot:
                     jira_prompt = f.read().strip()
                     jira_prompt += "Thread:\n```\n" + thread_text + "\n```\n"
 
-            # Call OpenAI-compatible LLM endpoint
+            # Call LLM (either via MCP or direct HTTP)
             llm_response = self.call_llm(jira_prompt)
             if not llm_response:
                 say("❌ Failed to generate Jira story from thread.")
@@ -388,8 +525,28 @@ class SlackThreadBot:
                 raise  # Re-raise in debug mode for full traceback
 
     def call_llm(self, prompt: str) -> str | None:
-        """Call OpenAI-compatible LLM endpoint to generate Jira story"""
+        """Call LLM either via MCP or direct HTTP endpoint"""
+        if USE_MCP and self.mcp_manager:
+            # Try MCP first
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If we're in an async context, we need to handle this differently
+                    # For now, fall back to direct HTTP
+                    logger.warning(
+                        "Already in async context, falling back to direct HTTP"
+                    )
+                    return self.call_llm_direct(prompt)
+                return loop.run_until_complete(self.mcp_manager.call_llm(prompt))
+            except Exception as e:
+                logger.warning("MCP call failed, falling back to direct HTTP: %s", e)
+                return self.call_llm_direct(prompt)
+        else:
+            # Use direct HTTP call
+            return self.call_llm_direct(prompt)
 
+    def call_llm_direct(self, prompt: str) -> str | None:
+        """Call OpenAI-compatible LLM endpoint to generate Jira story (original method)"""
         api_url = os.environ.get(
             "OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"
         )
@@ -462,6 +619,16 @@ class SlackThreadBot:
         logger.info("Environment validation passed")
         return True
 
+    async def initialize_mcp(self):
+        """Initialize MCP connections"""
+        if self.mcp_manager:
+            await self.mcp_manager.initialize_servers()
+
+    async def cleanup_mcp(self):
+        """Cleanup MCP connections"""
+        if self.mcp_manager:
+            await self.mcp_manager.cleanup()
+
     def start(self):
         """Start the Slack bot"""
         logger.info("Starting Slack Thread Bot...")
@@ -475,11 +642,39 @@ class SlackThreadBot:
                     value = f"{value[:10]}..." if len(value) > 10 else value
                 logger.debug("  %s: %s", key, value)
 
+        # Log MCP configuration
+        if USE_MCP:
+            logger.info(
+                "🔌 MCP ENABLED with %d servers configured:",
+                len([s for s in MCP_SERVERS if s["enabled"]]),
+            )
+            for server in MCP_SERVERS:
+                status = "✅ enabled" if server["enabled"] else "❌ disabled"
+                logger.info(
+                    "  - %s (priority %d): %s",
+                    server["name"],
+                    server["priority"],
+                    status,
+                )
+        else:
+            logger.info("🔌 MCP DISABLED - using direct HTTP calls")
+
         if not self.validate_environment():
             logger.error("Environment validation failed. Exiting.")
             sys.exit(1)
 
         try:
+            # Initialize MCP if enabled
+            if USE_MCP and self.mcp_manager:
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(self.initialize_mcp())
+                    logger.info("🔌 MCP initialization completed")
+                except Exception as e:
+                    logger.error("❌ MCP initialization failed: %s", e)
+                    logger.info("🔄 Will fall back to direct HTTP calls")
+
             # Test the bot token first
             try:
                 test_response = self.app.client.auth_test()
@@ -494,17 +689,33 @@ class SlackThreadBot:
             handler = SocketModeHandler(self.app, self.app_token)
             logger.info("Socket mode handler created successfully")
             logger.info("🚀 Bot is starting...")
-            logger.info("📝 Send '%s' in any Slack channel to test!", self.KEYWORD)
             logger.info(
-                "🤖 Send '%s' in any Slack channel for llm story generation!",
+                "📝 Send '%s' in any Slack thread to copy conversation!", self.KEYWORD
+            )
+            logger.info(
+                "🤖 Send '%s' in any Slack thread for LLM story generation!",
                 self.GENSTORY_KEYWORD,
             )
+
+            if USE_MCP:
+                logger.info("🔌 Using MCP for LLM calls")
+            else:
+                logger.info("🌐 Using direct HTTP for LLM calls")
+
             logger.info("🐛 All messages will be logged in debug mode")
             logger.info("💾 User display names will be cached to improve performance")
+
             handler.start()
 
         except KeyboardInterrupt:
             logger.info("Bot stopped by user")
+            # Cleanup MCP connections
+            if USE_MCP and self.mcp_manager:
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(self.cleanup_mcp())
+                except Exception as e:
+                    logger.warning("Error during MCP cleanup: %s", e)
         except Exception as e:
             logger.error("Failed to start bot: %s", str(e), exc_info=DEBUG_MODE)
             sys.exit(1)
