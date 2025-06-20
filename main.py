@@ -28,7 +28,7 @@ except ImportError:
 MCP_SERVERS = [
     {
         "name": "jayrah",
-        "command": ["jayrah", "-v", "mcp"],
+        "command": ["jayrah", "mcp"],
         "priority": 1,  # Lower number = higher priority
         "enabled": True,
     },
@@ -78,32 +78,64 @@ class MCPManager:
 
         logger.info("Initializing %d MCP servers...", len(self.enabled_servers))
 
+        # Initialize servers concurrently with individual timeouts
+        tasks = []
         for server_config in self.enabled_servers:
-            try:
-                await self._initialize_server(server_config)
-            except Exception as e:
-                logger.error(
-                    "Failed to initialize MCP server %s: %s", server_config["name"], e
-                )
+            task = asyncio.create_task(self._initialize_server(server_config))
+            tasks.append(task)
+
+        # Wait for all tasks with a global timeout
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=15
+            )
+        except asyncio.TimeoutError:
+            logger.error("❌ Global timeout reached while initializing MCP servers")
+
+        logger.info(
+            "MCP initialization completed. Active sessions: %d", len(self.sessions)
+        )
 
     async def _initialize_server(self, server_config: dict):
         """Initialize a single MCP server"""
         name = server_config["name"]
         command = server_config["command"]
 
+        logger.info(
+            "🔄 Starting initialization for server: %s with command: %s", name, command
+        )
+
         try:
             server_params = StdioServerParameters(
                 command=command[0], args=command[1:] if len(command) > 1 else []
             )
 
-            async with stdio_client(server_params) as session:
-                await session.initialize()
+            logger.debug("📡 Created server params for %s", name)
 
-            self.sessions[name] = session
-            logger.info("✅ MCP server '%s' initialized successfully", name)
+            # Add aggressive timeout to prevent blocking
+            async with asyncio.timeout(10):  # Reduced to 10 seconds
+                logger.debug("🚀 Attempting stdio_client connection for %s", name)
+                async with stdio_client(server_params) as (receive_stream, send_stream):
+                    logger.debug(
+                        "✅ stdio_client connected for %s, creating session", name
+                    )
+                    session = ClientSession(receive_stream, send_stream)
 
+                    logger.debug("🔧 Initializing session for %s", name)
+                    await session.initialize()
+
+                    self.sessions[name] = session
+                    logger.info("✅ MCP server '%s' initialized successfully", name)
+
+        except asyncio.TimeoutError:
+            logger.error(
+                "❌ Timeout initializing MCP server '%s' (10s) - command may be hanging",
+                name,
+            )
+        except FileNotFoundError:
+            logger.error("❌ Command not found for MCP server '%s': %s", name, command)
         except Exception as e:
-            logger.error("❌ Failed to initialize MCP server '%s': %s", name, e)
+            logger.error("❌ Failed to initialize MCP server '%s': %s", name, repr(e))
 
     async def call_llm(self, prompt: str) -> Optional[str]:
         """Call LLM using the first available MCP server"""
@@ -170,6 +202,7 @@ class SlackThreadBot:
 
     KEYWORD = "!copyt"  # Command to trigger thread copying
     GENSTORY_KEYWORD = "!genstory"  # Command to trigger Jira story generation
+    CHECKDUPLI_KEYWORD = "!checkdupli"  # Command to trigger duplicate Jira search
 
     def __init__(self, bot_token: str, app_token: str):
         self.bot_token = bot_token
@@ -194,6 +227,10 @@ class SlackThreadBot:
         @self.app.message(self.KEYWORD)
         def copy_thread_handler(message, say, client):
             self.handle_copy_thread(message, say, client)
+
+        @self.app.message(self.CHECKDUPLI_KEYWORD)
+        def checkdupli_handler(message, say, client):
+            self.handle_checkdupli(message, say, client)
 
         @self.app.message(self.GENSTORY_KEYWORD)
         def genstory_handler(message, say, client):
@@ -404,6 +441,92 @@ class SlackThreadBot:
             "Formatted prompt completed, total length: %d characters", len(result)
         )
         return result
+
+    def handle_checkdupli(self, message, say, client):
+        """Handle the !checkdupli command to search for duplicate Jira issues"""
+        user = message.get("user")
+        if user:
+            display_name = self.get_user_display_name(client, user)
+        else:
+            display_name = "Unknown"
+        logger.info(
+            "Received %s command from user %s (ID: %s)",
+            self.CHECKDUPLI_KEYWORD,
+            display_name,
+            user,
+        )
+
+        if not message.get("thread_ts"):
+            logger.info("Command not sent in a thread, ignoring")
+            return
+
+        try:
+            thread_ts = message.get("thread_ts")
+            channel = message["channel"]
+
+            if DEBUG_MODE:
+                logger.debug(
+                    "Processing checkdupli thread with ts: %s in channel: %s",
+                    thread_ts,
+                    channel,
+                )
+                logger.debug("Original message: %s", message)
+
+            # Get all replies in the thread
+            result = client.conversations_replies(channel=channel, ts=thread_ts)
+            messages = result.get("messages", [])
+            if not messages:
+                logger.warning("No messages found in thread")
+                say("❌ No messages found in this thread.")
+                return
+
+            # Filter out the command message itself
+            filtered_messages = []
+            for msg in messages:
+                text = msg.get("text", "")
+                if text.strip() == self.CHECKDUPLI_KEYWORD or text.strip().startswith(
+                    f"{self.CHECKDUPLI_KEYWORD} "
+                ):
+                    if DEBUG_MODE:
+                        logger.debug(
+                            "Filtering out checkdupli command message: %s", text
+                        )
+                    continue
+                filtered_messages.append(msg)
+
+            if not filtered_messages:
+                logger.warning("No messages found in thread after filtering command")
+                say("❌ No conversation found in this thread (only command message).")
+                return
+
+            # Format messages into prompt for LLM
+            thread_text = self.format_thread_as_prompt(filtered_messages, client)
+            jira_prompt = (
+                "Given the following Slack thread conversation, extract the most important keywords and search in Jira for potentially duplicate issues. "
+                "List the top 5 potential duplicate Jira issues (with their keys and summaries) that might match the topic of this thread. "
+                "If you cannot access Jira, just list the keywords you would use for the search.\n\n"
+                f"Thread:\n{thread_text}\n\nPotential duplicate Jira issues:"
+            )
+            llm_response = self.call_llm(jira_prompt)
+            if not llm_response:
+                say("❌ Failed to check for duplicate Jira issues from thread.")
+                return
+
+            # Post the result directly in the thread
+            say(
+                f"🔎 Potential duplicate Jira issues (via LLM):\n{llm_response}",
+                thread_ts=thread_ts,
+            )
+            logger.info(
+                "Posted potential duplicate Jira issues for thread %s", thread_ts
+            )
+
+        except Exception as e:
+            error_msg = f"Error checking for duplicate Jira issues: {str(e)}"
+            logger.error(error_msg, exc_info=DEBUG_MODE)
+            say(f"❌ {error_msg}")
+            if DEBUG_MODE:
+                raise  # Re-raise in debug mode for full traceback
 
     def handle_genstory(self, message, say, client):
         """Handle the !genstory command to generate a Jira story from thread"""
