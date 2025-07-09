@@ -76,6 +76,7 @@ class SlackThreadBot:
         self.bot_token = bot_token
         self.app_token = app_token
         self.user_cache: Dict[str, str] = {}  # Cache for user display names
+        self.team_url: str | None = None
 
         # Initialize Slack app with debug logging
         self.app = App(token=bot_token, logger=logger if DEBUG_MODE else None)
@@ -201,6 +202,9 @@ class SlackThreadBot:
             if DEBUG_MODE:
                 logger.debug("Formatted prompt length: %d characters", len(prompt))
 
+            # Add thread URL to the top of the prompt
+            thread_link = self._get_thread_link(channel, thread_ts)
+
             # Send as snippet to direct message
             user_id = message.get("user")
             if user_id:
@@ -221,7 +225,9 @@ class SlackThreadBot:
                         filename=filename,
                         title="Thread Conversation",
                         snippet_type="text",
-                        initial_comment="📋 Here's your thread conversation as a snippet - click to expand and copy all text!",
+                        initial_comment=f"📋 Here’s your conversation from this <{thread_link}|thread> as a snippet. Click to expand and copy all text!"
+                        if thread_link
+                        else "📋 Here’s your conversation as a snippet. Click to expand and copy all text!",
                     )
 
                     self._update_reaction(client, channel, ts, "white_check_mark")
@@ -254,6 +260,15 @@ class SlackThreadBot:
             self._update_reaction(
                 client, channel, ts, "hourglass_flowing_sand", add=False
             )
+
+    def _get_thread_link(self, channel_id: str, thread_ts: str) -> str | None:
+        """Construct the permanent URL for a Slack thread."""
+        if not self.team_url:
+            logger.warning("Team URL not available, cannot generate thread link.")
+            return None
+        # Format timestamp by removing the dot
+        formatted_ts = thread_ts.replace(".", "")
+        return f"{self.team_url}archives/{channel_id}/p{formatted_ts}"
 
     def get_user_display_name(self, client, user_id: str) -> str:
         """Get the display name for a user ID with caching"""
@@ -490,16 +505,20 @@ class SlackThreadBot:
 
             # Format messages into prompt for LLM
             thread_text = self.format_thread_as_prompt(filtered_messages, client)
+            thread_link = self._get_thread_link(channel, thread_ts)
+
             jira_prompt = (
                 "Given the following Slack thread conversation, generate a Jira story in Jira format. "
                 "Include a summary, description, and acceptance criteria if possible.\n\n"
-                f"Thread:\n{thread_text}\n\nJira Story:"
             )
+
+            jira_prompt += f"Thread:\n{thread_text}\n\nJira Story:"
+
             promptfile = os.path.dirname(__file__) + "/jira.prompt"
             if os.path.exists(promptfile):
                 with open(promptfile, "r", encoding="utf8") as f:
                     jira_prompt = f.read().strip()
-                    jira_prompt += "Thread:\n```\n" + thread_text + "\n```\n"
+                    jira_prompt += "\n\nThread:\n```\n" + thread_text + "\n```\n"
 
             # Call LLM (either via MCP or direct HTTP)
             llm_response = self.call_llm(jira_prompt)
@@ -525,7 +544,9 @@ class SlackThreadBot:
                         filename=filename,
                         title="Generated Jira Story",
                         snippet_type="text",
-                        initial_comment="📝 Here's your generated Jira story from the thread!",
+                        initial_comment=f"📝 Here's your generated Jira story from this <{thread_link}|thread>!"
+                        if thread_link
+                        else "📝 Here's your generated Jira story from the thread!",
                     )
                     self._update_reaction(client, channel, ts, "white_check_mark")
                     logger.info(
@@ -686,10 +707,12 @@ class SlackThreadBot:
             # Test the bot token first
             try:
                 test_response = self.app.client.auth_test()
+                self.team_url = test_response.get("url")
                 logger.info(
                     "✅ Bot authenticated as: %s", test_response.get("user", "Unknown")
                 )
                 logger.info("✅ Team: %s", test_response.get("team", "Unknown"))
+                logger.info("✅ Team URL: %s", self.team_url)
             except Exception as e:
                 logger.error("❌ Bot token authentication failed: %s", e)
                 raise
