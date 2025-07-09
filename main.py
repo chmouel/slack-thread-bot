@@ -129,7 +129,9 @@ class SlackThreadBot:
                 e,
             )
 
-    def handle_copy_thread(self, message, client):  # pylint: disable=too-many-positional-arguments
+    def handle_copy_thread(
+        self, message, client
+    ):  # pylint: disable=too-many-positional-arguments
         """Handle the !copyt command to copy thread conversations"""
         user = message.get("user")
         if user:
@@ -220,9 +222,11 @@ class SlackThreadBot:
                         filename=filename,
                         title="Thread Conversation",
                         snippet_type="text",
-                        initial_comment=f"📋 Here’s your conversation from this <{thread_link}|thread> as a snippet. Click to expand and copy all text!"
-                        if thread_link
-                        else "📋 Here’s your conversation as a snippet. Click to expand and copy all text!",
+                        initial_comment=(
+                            f"📋 Here’s your conversation from this <{thread_link}|thread> as a snippet. Click to expand and copy all text!"
+                            if thread_link
+                            else "📋 Here’s your conversation as a snippet. Click to expand and copy all text!"
+                        ),
                     )
 
                     self._update_reaction(client, channel, ts, "white_check_mark")
@@ -345,7 +349,9 @@ class SlackThreadBot:
         )
         return result
 
-    def handle_genstory(self, message, client):  # pylint: disable=too-many-positional-arguments
+    def handle_genstory(
+        self, message, client
+    ):  # pylint: disable=too-many-positional-arguments
         """Handle the !genstory command to generate a Jira story from thread"""
         user = message.get("user")
         if user:
@@ -441,9 +447,11 @@ class SlackThreadBot:
                         filename=filename,
                         title="Generated Jira Story",
                         snippet_type="text",
-                        initial_comment=f"📝 Here's your generated Jira story from this <{thread_link}|thread>!"
-                        if thread_link
-                        else "📝 Here's your generated Jira story from the thread!",
+                        initial_comment=(
+                            f"📝 Here's your generated Jira story from this <{thread_link}|thread>!"
+                            if thread_link
+                            else "📝 Here's your generated Jira story from the thread!"
+                        ),
                     )
                     self._update_reaction(client, channel, ts, "white_check_mark")
                     logger.info(
