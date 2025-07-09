@@ -35,6 +35,31 @@ A Slack bot that copies thread conversations and formats them for easy sharing.
 - `SLACK_BOT_TOKEN`: Your Slack bot token (starts with `xoxb-`)
 - `SLACK_APP_TOKEN`: Your Slack app token (starts with `xapp-`)  
 - `DEBUG`: Enable debug mode (`true`, `1`, `yes`, `on` for enabled)
+- `LLM_PROVIDER`: The desired LLM provider. Can be `openai` (default) or `gemini`.
+- `OPENAI_API_KEY`: Your OpenAI API key (if using `openai`).
+- `OPENAI_MODEL`: The OpenAI model to use (e.g., `gpt-3.5-turbo`).
+- `GEMINI_API_KEY`: Your Gemini API key (if using `gemini`).
+- `GEMINI_MODEL`: The Gemini model to use (e.g., `gemini-pro`).
+
+## LLM Integration
+
+This bot can integrate with either OpenAI or Gemini to generate Jira stories from Slack threads using the `!genstory` command.
+
+To configure the LLM provider, set the `LLM_PROVIDER` environment variable to either `openai` or `gemini`.
+
+### OpenAI
+
+If `LLM_PROVIDER` is set to `openai` (or is unset), you must provide:
+
+- `OPENAI_API_KEY`: Your OpenAI API key.
+- `OPENAI_MODEL`: (Optional) The model to use (defaults to `gpt-3.5-turbo`).
+
+### Gemini
+
+If `LLM_PROVIDER` is set to `gemini`, you must provide:
+
+- `GEMINI_API_KEY`: Your Google AI Studio API key.
+- `GEMINI_MODEL`: (Optional) The model to use (defaults to `gemini-pro`).
 
 ## Debug Mode
 

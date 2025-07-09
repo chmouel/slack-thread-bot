@@ -5,6 +5,7 @@ import re
 import sys
 from typing import Dict
 
+import google.generativeai as genai
 import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -117,9 +118,7 @@ class SlackThreadBot:
         except Exception as e:
             logger.error("Failed to send DM to user %s: %s", user_id, e)
 
-    def _update_reaction(
-        self, client, channel, ts, emoji_name, add=True
-    ):
+    def _update_reaction(self, client, channel, ts, emoji_name, add=True):
         """Add or remove a reaction from a message."""
         try:
             if add:
@@ -558,10 +557,17 @@ class SlackThreadBot:
             )
 
     def call_llm(self, prompt: str) -> str | None:
-        """Call LLM via direct HTTP endpoint"""
-        return self.call_llm_direct(prompt)
+        """Call the configured LLM provider."""
+        llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+        if llm_provider == "gemini":
+            return self.call_gemini(prompt)
+        if llm_provider == "openai":
+            return self.call_openai(prompt)
 
-    def call_llm_direct(self, prompt: str) -> str | None:
+        logger.error("Invalid LLM_PROVIDER configured: %s", llm_provider)
+        return None
+
+    def call_openai(self, prompt: str) -> str | None:
         """Call OpenAI-compatible LLM endpoint to generate Jira story (original method)"""
         api_url = os.environ.get(
             "OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"
@@ -602,6 +608,24 @@ class SlackThreadBot:
             logger.error("Failed to call LLM endpoint: %s", e)
             return None
 
+    def call_gemini(self, prompt: str) -> str | None:
+        """Call the Gemini API."""
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            logger.error("GEMINI_API_KEY environment variable not set")
+            return None
+        genai.configure(api_key=api_key)
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-pro")
+        model = genai.GenerativeModel(model_name)
+        logger.info("Calling Gemini with model %s", model_name)
+        try:
+            response = model.generate_content(prompt)
+            logger.info("Raw Gemini response: %s", response.text)
+            return response.text
+        except Exception as e:
+            logger.error("Failed to call Gemini API: %s", e)
+            return None
+
     def clean_slack_text(self, text: str) -> str:
         """Remove Slack-specific formatting from text"""
         if DEBUG_MODE:
@@ -621,19 +645,24 @@ class SlackThreadBot:
     def validate_environment(self) -> bool:
         """Validate required environment variables"""
         required_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]
-        missing_vars = []
+        llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
 
-        for var in required_vars:
-            if not os.environ.get(var):
-                missing_vars.append(var)
+        if llm_provider == "openai":
+            required_vars.append("OPENAI_API_KEY")
+        elif llm_provider == "gemini":
+            required_vars.append("GEMINI_API_KEY")
+        else:
+            logger.error("Invalid LLM_PROVIDER: %s", llm_provider)
+            return False
 
+        missing_vars = [v for v in required_vars if not os.environ.get(v)]
         if missing_vars:
             logger.error(
                 "Missing required environment variables: %s", ", ".join(missing_vars)
             )
             return False
 
-        logger.info("Environment validation passed")
+        logger.info("Environment validation passed for %s provider", llm_provider)
         return True
 
     def start(self):
@@ -643,7 +672,7 @@ class SlackThreadBot:
         if DEBUG_MODE:
             logger.info("🐛 DEBUG MODE ENABLED")
             logger.debug("Environment variables:")
-            for key in ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "DEBUG"]:
+            for key in ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "DEBUG", "LLM_PROVIDER"]:
                 value = os.environ.get(key, "Not set")
                 if "TOKEN" in key and value != "Not set":
                     value = f"{value[:10]}..." if len(value) > 10 else value
@@ -676,7 +705,8 @@ class SlackThreadBot:
                 self.GENSTORY_KEYWORD,
             )
 
-            logger.info("🌐 Using direct HTTP for LLM calls")
+            llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+            logger.info("🌐 Using %s for LLM calls", llm_provider)
 
             logger.info("🐛 All messages will be logged in debug mode")
             logger.info("💾 User display names will be cached to improve performance")
