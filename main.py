@@ -92,15 +92,15 @@ class SlackThreadBot:
     def _register_handlers(self):
         """Register all Slack event handlers"""
 
-        @self.app.message(self.KEYWORD)
+        @self.app.message(re.compile(f"^{re.escape(self.KEYWORD)}"))
         def copy_thread_handler(message, client):
             self.handle_copy_thread(message, client)
 
-        @self.app.message(self.GENSTORY_KEYWORD)
+        @self.app.message(re.compile(f"^{re.escape(self.GENSTORY_KEYWORD)}"))
         def genstory_handler(message, client):
             self.handle_genstory(message, client)
 
-        @self.app.message(self.TZ_KEYWORD)
+        @self.app.message(re.compile(f"^{re.escape(self.TZ_KEYWORD)}"))
         def tz_handler(message, client):
             self.handle_tz(message, client)
 
