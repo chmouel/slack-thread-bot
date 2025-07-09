@@ -85,11 +85,13 @@ If `LLM_PROVIDER` is set to `gemini`, you must provide:
 2. In any message thread, use one of the following commands:
     - `!copyt`: The bot will format and send you a direct message with the entire thread conversation, including a link to the original thread.
     - `!genstory`: The bot will use an LLM (OpenAI or Gemini) to generate a Jira story from the thread conversation and send it to you as a snippet in a direct message. The story will also include a link to the original thread.
-    - `!tz <time>`: The bot will convert the specified time across a pre-configured set of timezones and post the results in the thread.
+    - `!tz <time> [airport codes]`: The bot will convert the specified time across a pre-configured set of timezones or the specified airport codes and post the results in the thread.
         - `!tz 10h00`
         - `!tz 10:30 tomorrow`
         - `!tz 5pm next monday`
         - `!tz now` (or just `!tz`)
+        - `!tz 10h00 BLR,CDG`
+        - `!tz tomorrow 10:00 NY`
 
 ## 🔐 Slack App Permissions
 

@@ -8,6 +8,7 @@ from typing import Dict
 
 import google.generativeai as genai
 import requests
+from airporttime import AirportTime
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -433,30 +434,8 @@ class SlackThreadBot:
                 self._update_reaction(client, channel, ts, "x")
                 return
 
-            # Filter out the command message itself
-            filtered_messages = []
-            for msg in messages:
-                text = msg.get("text", "")
-                if text.strip() == self.GENSTORY_KEYWORD or text.strip().startswith(
-                    f"{self.GENSTORY_KEYWORD} "
-                ):
-                    if DEBUG_MODE:
-                        logger.debug("Filtering out genstory command message: %s", text)
-                    continue
-                filtered_messages.append(msg)
-
-            if not filtered_messages:
-                logger.warning("No messages found in thread after filtering command")
-                self._send_dm(
-                    client,
-                    user,
-                    "❌ No conversation found in this thread (only command message).",
-                )
-                self._update_reaction(client, channel, ts, "x")
-                return
-
             # Format messages into prompt for LLM
-            thread_text = self.format_thread_as_prompt(filtered_messages, client)
+            thread_text = self.format_thread_as_prompt(messages, client)
             thread_link = self._get_thread_link(channel, thread_ts)
             if thread_link:
                 logger.info("Generated thread link: %s", thread_link)
@@ -564,16 +543,30 @@ class SlackThreadBot:
         # Extract time argument from the message
         command_text = message.get("text", "").strip()
         time_arg = command_text[len(self.TZ_KEYWORD) :].strip()
+        time_parts = time_arg.split(" ")
+        time_str = ""
+        airport_codes = []
 
-        # Make a maximum of 2 words for time argument
-        if len(time_arg.split(" ")) > 2:
-            time_arg = " ".join(time_arg.split(" ")[:2])
+        for part in time_parts:
+            if re.match(r"^\d+([:h])\d{2}$", part) or part in [
+                "now",
+                "today",
+                "tomorrow",
+                "yesterday",
+            ]:
+                time_str += f" {part}"
+            else:
+                codes = [c.strip() for c in part.split(",")]
+                for code in codes:
+                    if code.isalpha() and len(code) == 3:
+                        airport_codes.append(code.upper())
 
-        if not time_arg:
-            time_arg = "now"
+        time_str = time_str.strip()
+        if not time_str:
+            time_str = "now"
 
         # Convert 10h00 to 10:00 for compatibility
-        time_arg = re.sub(r"(\d+)h(\d+)", r"\1:\2", time_arg)
+        time_str = re.sub(r"(\d+)h(\d+)", r"\1:\2", time_str)
 
         self._update_reaction(client, channel, ts, "hourglass_flowing_sand")
 
@@ -582,11 +575,35 @@ class SlackThreadBot:
             user_tz = self.get_user_timezone(client, user_id)
             base_tz = user_tz or os.environ.get("BATZ_BASE_TZ", "UTC")
 
-            timezones_str = os.environ.get(
-                "BATZ_TIMEZONES",
-                "Bangalore/Asia/Kolkata,Paris/Europe/Paris,Boston/America/New_York",
-            )
-            timezones = dict(item.split("/", 1) for item in timezones_str.split(","))
+            timezones = {}
+            invalid_codes = []
+            if airport_codes:
+                for code in airport_codes:
+                    try:
+                        airport_time = AirportTime(code)
+                        timezones[code] = getattr(airport_time.airport, "timezone")
+                    except ValueError:
+                        logger.warning("Invalid airport code: %s", code)
+                        invalid_codes.append(code)
+
+                if invalid_codes:
+                    self._send_dm(
+                        client,
+                        user_id,
+                        f"❌ Invalid airport code(s): {', '.join(invalid_codes)}. Please use valid IATA airport codes.",
+                    )
+
+                if not timezones:
+                    self._update_reaction(client, channel, ts, "x")
+                    return
+            else:
+                timezones_str = os.environ.get(
+                    "BATZ_TIMEZONES",
+                    "Bangalore/Asia/Kolkata,Paris/Europe/Paris,Boston/America/New_York",
+                )
+                timezones = dict(
+                    item.split("/", 1) for item in timezones_str.split(",")
+                )
 
             # Get emoji mappings from environment
             emojis_str = os.environ.get("BATZ_EMOJIS", "")
@@ -599,7 +616,7 @@ class SlackThreadBot:
             results = []
             for name, tz in timezones.items():
                 converted_time, error = self._convert_time_with_date(
-                    time_arg, base_tz, tz
+                    time_str, base_tz, tz
                 )
                 if error:
                     raise ValueError(f"Failed to convert time for {tz}: {error}")
