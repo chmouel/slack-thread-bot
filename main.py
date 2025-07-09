@@ -542,30 +542,31 @@ class SlackThreadBot:
         ts = message["ts"]
         thread_ts = message.get("thread_ts", ts)
 
-        # Extract time argument from the message
         command_text = message.get("text", "").strip()
-        time_arg = command_text[len(self.TZ_KEYWORD) :].strip()
-        time_parts = time_arg.split(" ")
-        time_str = ""
+        args_str = command_text[len(self.TZ_KEYWORD) :].strip()
+
+        time_str = "now"
         airport_codes = []
 
-        for part in time_parts:
-            if re.match(r"^\d+([:h])\d{2}$", part) or part in [
-                "now",
-                "today",
-                "tomorrow",
-                "yesterday",
-            ]:
-                time_str += f" {part}"
+        if args_str:
+            # Regex to find all 3-letter words at the end of the string, separated by spaces or commas
+            match = re.search(
+                r"((?:\s|,|(?<=,)\s*)([A-Z]{3}))+$", args_str, re.IGNORECASE
+            )
+            if match:
+                codes_str = match.group(0).strip()
+                # Clean and validate codes
+                potential_codes = [c for c in re.split(r"[\s,]+", codes_str) if c]
+                if all(
+                    re.fullmatch(r"[A-Z]{3}", code, re.IGNORECASE)
+                    for code in potential_codes
+                ):
+                    airport_codes = [c.upper() for c in potential_codes]
+                    time_str = args_str[: match.start()].strip() or "now"
+                else:
+                    time_str = args_str
             else:
-                codes = [c.strip() for c in part.split(",")]
-                for code in codes:
-                    if code.isalpha() and len(code) == 3:
-                        airport_codes.append(code.upper())
-
-        time_str = time_str.strip()
-        if not time_str:
-            time_str = "now"
+                time_str = args_str
 
         # Convert 10h00 to 10:00 for compatibility
         time_str = re.sub(r"(\d+)h(\d+)", r"\1:\2", time_str)
@@ -584,7 +585,7 @@ class SlackThreadBot:
                     try:
                         airport_time = AirportTime(code)
                         timezones[code] = getattr(airport_time.airport, "timezone")
-                    except ValueError:
+                    except Exception:
                         logger.warning("Invalid airport code: %s", code)
                         invalid_codes.append(code)
 
