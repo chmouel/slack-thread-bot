@@ -284,6 +284,23 @@ class SlackThreadBot:
         except Exception as e:
             logger.error("Failed to send DM to user %s: %s", user_id, e)
 
+    def _update_reaction(
+        self, client, channel, ts, emoji_name, add=True
+    ):
+        """Add or remove a reaction from a message."""
+        try:
+            if add:
+                client.reactions_add(channel=channel, name=emoji_name, timestamp=ts)
+            else:
+                client.reactions_remove(channel=channel, name=emoji_name, timestamp=ts)
+        except Exception as e:
+            logger.warning(
+                "Failed to %s reaction '%s': %s",
+                "add" if add else "remove",
+                emoji_name,
+                e,
+            )
+
     def handle_copy_thread(self, message, say, client):
         """Handle the !copyt command to copy thread conversations"""
         user = message.get("user")
@@ -303,16 +320,12 @@ class SlackThreadBot:
             logger.info("Command not sent in a thread, ignoring")
             return
 
+        channel = message["channel"]
+        ts = message["ts"]
+        self._update_reaction(client, channel, ts, "hourglass_flowing_sand")
+
         try:
             thread_ts = message.get("thread_ts")
-            channel = message["channel"]
-
-            if DEBUG_MODE:
-                logger.debug(
-                    "Processing thread with ts: %s in channel: %s", thread_ts, channel
-                )
-                logger.debug("Original message: %s", message)
-
             # Get all replies in the thread
             result = client.conversations_replies(channel=channel, ts=thread_ts)
 
@@ -325,6 +338,7 @@ class SlackThreadBot:
             if not messages:
                 logger.warning("No messages found in thread")
                 self._send_dm(client, user, "❌ No messages found in this thread.")
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Filter out the command message itself
@@ -347,6 +361,7 @@ class SlackThreadBot:
                     user,
                     "❌ No conversation found in this thread (only command message).",
                 )
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Format messages into prompt
@@ -377,11 +392,7 @@ class SlackThreadBot:
                         initial_comment="📋 Here's your thread conversation as a snippet - click to expand and copy all text!",
                     )
 
-                    # Acknowledge in the original channel with a brief message
-                    acknowledgment = (
-                        "✅ Thread copied! Check your DMs for an easy-to-copy snippet."
-                    )
-                    self._send_dm(client, user_id, acknowledgment)
+                    self._update_reaction(client, channel, ts, "white_check_mark")
 
                     logger.info(
                         "Successfully sent thread snippet to user %s via DM",
@@ -395,15 +406,22 @@ class SlackThreadBot:
                         user_id,
                         dm_error,
                     )
+                    self._update_reaction(client, channel, ts, "x")
             else:
                 logger.warning("No user ID found in message")
+                self._update_reaction(client, channel, ts, "x")
 
         except Exception as e:
             error_msg = f"Error processing thread: {str(e)}"
             logger.error(error_msg, exc_info=DEBUG_MODE)
             self._send_dm(client, user, f"❌ {error_msg}")
+            self._update_reaction(client, channel, ts, "x")
             if DEBUG_MODE:
                 raise  # Re-raise in debug mode for full traceback
+        finally:
+            self._update_reaction(
+                client, channel, ts, "hourglass_flowing_sand", add=False
+            )
 
     def get_user_display_name(self, client, user_id: str) -> str:
         """Get the display name for a user ID with caching"""
@@ -503,24 +521,19 @@ class SlackThreadBot:
             logger.info("Command not sent in a thread, ignoring")
             return
 
+        channel = message["channel"]
+        ts = message["ts"]
+        self._update_reaction(client, channel, ts, "hourglass_flowing_sand")
+
         try:
             thread_ts = message.get("thread_ts")
-            channel = message["channel"]
-
-            if DEBUG_MODE:
-                logger.debug(
-                    "Processing checkdupli thread with ts: %s in channel: %s",
-                    thread_ts,
-                    channel,
-                )
-                logger.debug("Original message: %s", message)
-
             # Get all replies in the thread
             result = client.conversations_replies(channel=channel, ts=thread_ts)
             messages = result.get("messages", [])
             if not messages:
                 logger.warning("No messages found in thread")
                 self._send_dm(client, user, "❌ No messages found in this thread.")
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Filter out the command message itself
@@ -544,6 +557,7 @@ class SlackThreadBot:
                     user,
                     "❌ No conversation found in this thread (only command message).",
                 )
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Format messages into prompt for LLM
@@ -561,6 +575,7 @@ class SlackThreadBot:
                     user,
                     "❌ Failed to check for duplicate Jira issues from thread.",
                 )
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Post the result directly in the thread
@@ -569,6 +584,7 @@ class SlackThreadBot:
                 user,
                 f"🔎 Potential duplicate Jira issues (via LLM):\n{llm_response}",
             )
+            self._update_reaction(client, channel, ts, "white_check_mark")
             logger.info(
                 "Posted potential duplicate Jira issues for thread %s", thread_ts
             )
@@ -577,8 +593,13 @@ class SlackThreadBot:
             error_msg = f"Error checking for duplicate Jira issues: {str(e)}"
             logger.error(error_msg, exc_info=DEBUG_MODE)
             self._send_dm(client, user, f"❌ {error_msg}")
+            self._update_reaction(client, channel, ts, "x")
             if DEBUG_MODE:
                 raise  # Re-raise in debug mode for full traceback
+        finally:
+            self._update_reaction(
+                client, channel, ts, "hourglass_flowing_sand", add=False
+            )
 
     def handle_genstory(self, message, say, client):
         """Handle the !genstory command to generate a Jira story from thread"""
@@ -598,24 +619,19 @@ class SlackThreadBot:
             logger.info("Command not sent in a thread, ignoring")
             return
 
+        channel = message["channel"]
+        ts = message["ts"]
+        self._update_reaction(client, channel, ts, "hourglass_flowing_sand")
+
         try:
             thread_ts = message.get("thread_ts")
-            channel = message["channel"]
-
-            if DEBUG_MODE:
-                logger.debug(
-                    "Processing genstory thread with ts: %s in channel: %s",
-                    thread_ts,
-                    channel,
-                )
-                logger.debug("Original message: %s", message)
-
             # Get all replies in the thread
             result = client.conversations_replies(channel=channel, ts=thread_ts)
             messages = result.get("messages", [])
             if not messages:
                 logger.warning("No messages found in thread")
                 self._send_dm(client, user, "❌ No messages found in this thread.")
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Filter out the command message itself
@@ -637,6 +653,7 @@ class SlackThreadBot:
                     user,
                     "❌ No conversation found in this thread (only command message).",
                 )
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Format messages into prompt for LLM
@@ -658,6 +675,7 @@ class SlackThreadBot:
                 self._send_dm(
                     client, user, "❌ Failed to generate Jira story from thread."
                 )
+                self._update_reaction(client, channel, ts, "x")
                 return
 
             # Send the generated Jira story as a snippet to the user via DM
@@ -677,10 +695,7 @@ class SlackThreadBot:
                         snippet_type="text",
                         initial_comment="📝 Here's your generated Jira story from the thread!",
                     )
-                    acknowledgment = (
-                        "✅ Jira story generated! Check your DMs for the result."
-                    )
-                    self._send_dm(client, user_id, acknowledgment)
+                    self._update_reaction(client, channel, ts, "white_check_mark")
                     logger.info(
                         "Successfully sent Jira story to user %s via DM",
                         display_name,
@@ -692,15 +707,22 @@ class SlackThreadBot:
                         user_id,
                         dm_error,
                     )
+                    self._update_reaction(client, channel, ts, "x")
             else:
                 logger.warning("No user ID found in message")
+                self._update_reaction(client, channel, ts, "x")
 
         except Exception as e:
             error_msg = f"Error generating Jira story: {str(e)}"
             logger.error(error_msg, exc_info=DEBUG_MODE)
             self._send_dm(client, user, f"❌ {error_msg}")
+            self._update_reaction(client, channel, ts, "x")
             if DEBUG_MODE:
                 raise  # Re-raise in debug mode for full traceback
+        finally:
+            self._update_reaction(
+                client, channel, ts, "hourglass_flowing_sand", add=False
+            )
 
     def call_llm(self, prompt: str) -> str | None:
         """Call LLM either via MCP or direct HTTP endpoint"""
