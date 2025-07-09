@@ -24,7 +24,9 @@ if DEBUG_MODE and not DEBUG_FILE:
     DEBUG_FILE = "/tmp/slack-bot-debug.log"
 
 LOG_LEVEL = logging.DEBUG if DEBUG_MODE else logging.INFO
-
+DEFAULT_TIMEZONES = (
+    "Bangalore/Asia/Kolkata,Paris/Europe/Paris,Boston/America/New_York,Tel Aviv/Asia/Jerusalem",
+)
 logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -599,7 +601,7 @@ class SlackThreadBot:
             else:
                 timezones_str = os.environ.get(
                     "BATZ_TIMEZONES",
-                    "Bangalore/Asia/Kolkata,Paris/Europe/Paris,Boston/America/New_York",
+                    DEFAULT_TIMEZONES,
                 )
                 timezones = dict(
                     item.split("/", 1) for item in timezones_str.split(",")
