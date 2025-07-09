@@ -62,6 +62,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def clean_llm_response(text: str) -> str:
+    """Remove unwanted tags from LLM response."""
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # 1. Remove <think>...</think> block from the beginning
+    if text.startswith("<think>"):
+        logger.debug("Original LLM response starts with <think> tag.")
+        end_think_pos = text.find("</think>")
+        if end_think_pos != -1:
+            text = text[end_think_pos + len("</think>") :].lstrip()
+            logger.debug("Cleaned LLM response after removing <think> tag.")
+
+    # 2. Remove triple backticks if they wrap the entire content
+    if text.startswith("```") and text.endswith("```"):
+        logger.debug("Response is wrapped in triple backticks.")
+        lines = text.splitlines()
+        if len(lines) > 1:
+            # Remove first line (e.g., ```json) and last line (```)
+            text = "\n".join(lines[1:-1])
+            logger.debug("Removed wrapping triple backticks.")
+        else:
+            # It's just ```...``` on one line, so remove them.
+            text = text[3:-3]
+
+    return text.strip()
+
+
 class MCPManager:
     """Manages multiple MCP server connections"""
 
@@ -174,7 +204,7 @@ class MCPManager:
                     logger.info(
                         "✅ LLM response received via MCP server: %s", server_name
                     )
-                    return text_response
+                    return clean_llm_response(text_response)
 
             except Exception as e:
                 logger.warning(
@@ -703,7 +733,8 @@ class SlackThreadBot:
             response = requests.post(api_url, headers=headers, json=data, timeout=60)
             response.raise_for_status()
             result = response.json()
-            return result["choices"][0]["message"]["content"].strip()
+            raw_response = result["choices"][0]["message"]["content"]
+            return clean_llm_response(raw_response)
         except Exception as e:
             logger.error("Failed to call LLM endpoint: %s", e)
             return None
