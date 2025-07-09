@@ -54,6 +54,7 @@ A Slack bot that copies thread conversations, generates Jira stories, and format
 - `OPENAI_MODEL`: The OpenAI model to use (e.g., `gpt-3.5-turbo`).
 - `GEMINI_API_KEY`: Your Gemini API key (if using `gemini`).
 - `GEMINI_MODEL`: The Gemini model to use (defaults to `gemini-2.5-flash`).
+- `CACHE_STORY_DIR`: (Optional) If set, the generated user story will be cached to this directory.
 
 ## 🤖 LLM Integration
 

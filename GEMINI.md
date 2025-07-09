@@ -3,7 +3,7 @@
 1. Use `uv` for dependency management and formatting. if you add a dependency,
    run `uv add <package>` to add it to the project. make sure to run `uv sync`
 to synchronize dependencies after adding or removing packages.
-2. Always check the Python code with `pylint` and format it with `uv format`.
+2. Always check the Python code with `pylint` and format it with `ruff format`.
 3. Always update the README if you change things or add new features.
 4. Write unit tests for all new features and bug fixes.
 5. Follow PEP 8 style guidelines for Python code.

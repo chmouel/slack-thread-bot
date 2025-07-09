@@ -433,6 +433,19 @@ class SlackThreadBot:
                 self._update_reaction(client, channel, ts, "x")
                 return
 
+            # Cache the story if the directory is set
+            cache_dir = os.environ.get("CACHE_STORY_DIR")
+            if cache_dir:
+                try:
+                    os.makedirs(cache_dir, exist_ok=True)
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    story_filename = os.path.join(cache_dir, f"story-{timestamp}.md")
+                    with open(story_filename, "w", encoding="utf-8") as f:
+                        f.write(llm_response)
+                    logger.info("User story cached to %s", story_filename)
+                except Exception as e:
+                    logger.error("Failed to cache user story: %s", e)
+
             # Send the generated Jira story as a snippet to the user via DM
             user_id = message.get("user")
             if user_id:
@@ -505,9 +518,10 @@ class SlackThreadBot:
             return None
         model = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
         logger.info("Calling LLM endpoint: %s with model %s", api_url, model)
-        logger.info(
-            "Using prompt for LLM query:\n%s\n\n", prompt[:1000]
-        )  # Log first 1000 chars
+        if DEBUG_MODE:
+            logger.info(
+                "Using prompt for LLM query:\n%s\n\n", prompt[:1000]
+            )  # Log first 1000 chars
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -547,7 +561,8 @@ class SlackThreadBot:
         logger.info("Calling Gemini with model %s", model_name)
         try:
             response = model.generate_content(prompt)
-            logger.info("Raw Gemini response: %s", response.text)
+            if DEBUG_MODE:
+                logger.info("Raw Gemini response: %s", response.text)
             return response.text
         except Exception as e:
             logger.error("Failed to call Gemini API: %s", e)
