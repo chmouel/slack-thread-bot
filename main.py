@@ -565,6 +565,10 @@ class SlackThreadBot:
         command_text = message.get("text", "").strip()
         time_arg = command_text[len(self.TZ_KEYWORD) :].strip()
 
+        # Make a maximum of 2 words for time argument
+        if len(time_arg.split(" ")) > 2:
+            time_arg = " ".join(time_arg.split(" ")[:2])
+
         if not time_arg:
             time_arg = "now"
 
@@ -631,9 +635,15 @@ class SlackThreadBot:
 
         try:
             if time_str and time_str.strip():
-                # Convert specific time from base_tz to target_tz
-                # Equivalent to: TZ="${target_tz}" date --date="TZ=\"${base_tz}\" ${time_str}" "+${date_format}"
-                command = [date_cmd, f'--date=TZ="{base_tz}" {time_str}', date_format]
+                sanitized_time = self._sanitize_time_input(time_str.strip())
+                if not sanitized_time:
+                    return None, "Invalid time format provided"
+
+                command = [
+                    date_cmd,
+                    f'--date=TZ="{base_tz}" {sanitized_time}',
+                    date_format,
+                ]
                 env = {"TZ": target_tz}
             else:
                 # Just show current time in target timezone
@@ -657,6 +667,49 @@ class SlackThreadBot:
         except subprocess.CalledProcessError as e:
             error_message = e.stderr.strip()
             return None, f"Error executing `{date_cmd}`: {error_message}"
+
+    def _sanitize_time_input(self, time_str: str) -> str | None:
+        """Sanitize time input to prevent shell injection."""
+        if not time_str:
+            return None
+
+        # Allow patterns like: "now", "10:30", "2024-01-15 10:30", "yesterday", "today", "tomorrow"
+        # "1 hour ago", "2 days ago", "+1 hour", "-30 minutes", etc.
+        allowed_pattern = r"^[a-zA-Z0-9\s:.\-+/]+$"
+
+        if not re.match(allowed_pattern, time_str):
+            logger.warning("Potentially unsafe time input blocked: %s", time_str)
+            return None
+
+        # Additional validation for common time formats
+        dangerous_chars = [
+            ";",
+            "&",
+            "|",
+            "`",
+            "$",
+            "(",
+            ")",
+            "{",
+            "}",
+            "[",
+            "]",
+            ">",
+            "<",
+            "\\",
+            '"',
+            "'",
+        ]
+        if any(char in time_str for char in dangerous_chars):
+            logger.warning("Dangerous characters detected in time input: %s", time_str)
+            return None
+
+        # Limit length to prevent buffer overflow attempts
+        if len(time_str) > 100:
+            logger.warning("Time input too long: %s", time_str)
+            return None
+
+        return time_str
 
     def _format_tz_results(self, results, emojis):
         """Format the timezone conversion results for Slack."""
