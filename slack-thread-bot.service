@@ -1,0 +1,10 @@
+[Unit]
+Description=Slack Thread Bot
+
+[Service]
+ExecStart=direnv exec /Users/chmouel/go/src/github.com/chmouel/slack-thread-bot uv run --python $(which python) main.py
+WorkingDirectory=/Users/chmouel/go/src/github.com/chmouel/slack-thread-bot
+Restart=always
+
+[Install]
+WantedBy=default.target
