@@ -195,6 +195,38 @@ class TestSlackThreadBot(unittest.TestCase):
         self.mock_client.chat_postMessage.assert_called_once()
 
     @patch("main.genai.GenerativeModel")
+    def test_handle_actions(self, mock_gemini):
+        """Test the !actions command."""
+        message = self._create_message("!actions")
+        self.mock_client.conversations_replies.return_value = {
+            "messages": [
+                {"text": "We need to do this thing.", "user": "U1"},
+            ]
+        }
+        self.mock_client.users_info.return_value = {
+            "user": {"profile": {"display_name": "User1"}}
+        }
+        mock_gemini.return_value.generate_content.return_value.text = (
+            "1. Do this thing."
+        )
+        self.bot.team_url = "https://fake.slack.com/"
+
+        with patch.dict(
+            os.environ,
+            {"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "fake-key"},
+            clear=True,
+        ):
+            self.bot.handle_actions(message, self.mock_client)
+
+        self.mock_client.chat_postMessage.assert_called_once()
+        args, kwargs = self.mock_client.chat_postMessage.call_args
+        self.assertEqual(kwargs["channel"], "C12345")
+        self.assertEqual(kwargs["thread_ts"], "1628630400.000200")
+        self.assertEqual(len(kwargs["blocks"]), 1)
+        self.assertEqual(kwargs["blocks"][0]["type"], "section")
+        self.assertIn("Do this thing", kwargs["blocks"][0]["text"]["text"])
+
+    @patch("main.genai.GenerativeModel")
     def test_handle_genstory_gemini(self, mock_gemini):
         """Test the !genstory command with the Gemini provider."""
         message = self._create_message("!genstory")

@@ -74,6 +74,7 @@ class SlackThreadBot:
 
     KEYWORD = "!copyt"  # Command to trigger thread copying
     GENSTORY_KEYWORD = "!genstory"  # Command to trigger Jira story generation
+    ACTIONS_KEYWORD = "!actions"  # Command to trigger action item extraction
     TZ_KEYWORD = "!tz"  # Command to trigger timezone conversion
 
     def __init__(self, bot_token: str, app_token: str):
@@ -103,6 +104,10 @@ class SlackThreadBot:
         def genstory_handler(message, client):
             self.handle_genstory(message, client)
 
+        @self.app.message(re.compile(f"^{re.escape(self.ACTIONS_KEYWORD)}"))
+        def actions_handler(message, client):
+            self.handle_actions(message, client)
+
         @self.app.message(re.compile(f"^{re.escape(self.TZ_KEYWORD)}"))
         def tz_handler(message, client):
             self.handle_tz(message, client)
@@ -111,6 +116,34 @@ class SlackThreadBot:
         def handle_message_events(body):
             if DEBUG_MODE:
                 logger.debug("Received message event: %s", body)
+
+    def _send_error_with_help(self, client, user_id: str, error_message: str):
+        """Send an error message to a user, along with detailed help."""
+        if not user_id:
+            logger.warning("Cannot send error DM, user_id is missing.")
+            return
+        try:
+            dm_response = client.conversations_open(users=user_id)
+            dm_channel = dm_response["channel"]["id"]
+
+            error_block = {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"❌ {error_message}",
+                },
+            }
+
+            help_blocks = self._get_help_blocks()
+
+            client.chat_postMessage(
+                channel=dm_channel,
+                blocks=[error_block] + help_blocks,
+                text=f"Error: {error_message}",
+            )
+            logger.info("Sent error DM with help to user %s", user_id)
+        except Exception as e:
+            logger.error("Failed to send error DM to user %s: %s", user_id, e)
 
     def _send_dm(self, client, user_id: str, text: str):
         """Send a direct message to a user."""
@@ -527,6 +560,85 @@ class SlackThreadBot:
                 client, channel, ts, "hourglass_flowing_sand", add=False
             )
 
+    def handle_actions(self, message, client):  # pylint: disable=too-many-positional-arguments
+        """Handle the !actions command to extract action items from a thread."""
+        user = message.get("user")
+        if user:
+            display_name = self.get_user_display_name(client, user)
+        else:
+            display_name = "Unknown"
+        logger.info(
+            "Received %s command from user %s (ID: %s)",
+            self.ACTIONS_KEYWORD,
+            display_name,
+            user,
+        )
+
+        if not message.get("thread_ts"):
+            logger.info("Command not sent in a thread, ignoring")
+            return
+
+        channel = message["channel"]
+        ts = message["ts"]
+        self._update_reaction(client, channel, ts, "hourglass_flowing_sand")
+
+        try:
+            thread_ts = message.get("thread_ts")
+            # Get all replies in the thread
+            result = client.conversations_replies(channel=channel, ts=thread_ts)
+            messages = result.get("messages", [])
+            if not messages:
+                logger.warning("No messages found in thread")
+                self._send_dm(client, user, "❌ No messages found in this thread.")
+                self._update_reaction(client, channel, ts, "x")
+                return
+
+            # Format messages into prompt for LLM
+            thread_text = self.format_thread_as_prompt(messages, client)
+
+            promptfile = os.path.dirname(__file__) + "/actions.prompt"
+            if os.path.exists(promptfile):
+                with open(promptfile, "r", encoding="utf8") as f:
+                    actions_prompt = f.read().strip()
+                    actions_prompt = actions_prompt.replace(
+                        "{thread_text}", thread_text
+                    )
+
+            # Call LLM
+            llm_response = self.call_llm(actions_prompt)
+            if not llm_response:
+                self._send_dm(
+                    client, user, "❌ Failed to extract action items from thread."
+                )
+                self._update_reaction(client, channel, ts, "x")
+                return
+
+            # Format the response as blocks
+            blocks = self._format_actions_as_blocks(llm_response)
+
+            # Post the response to the thread
+            client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts, blocks=blocks, text=llm_response
+            )
+            self._update_reaction(client, channel, ts, "white_check_mark")
+            logger.info(
+                "Successfully sent action items to user %s in channel %s",
+                display_name,
+                channel,
+            )
+
+        except Exception as e:
+            error_msg = f"Error extracting action items: {str(e)}"
+            logger.error(error_msg, exc_info=DEBUG_MODE)
+            self._send_dm(client, user, f"❌ {error_msg}")
+            self._update_reaction(client, channel, ts, "x")
+            if DEBUG_MODE:
+                raise  # Re-raise in debug mode for full traceback
+        finally:
+            self._update_reaction(
+                client, channel, ts, "hourglass_flowing_sand", add=False
+            )
+
     def handle_tz(self, message, client):
         """Handle the !tz command to convert timezones."""
         user_id = message.get("user")
@@ -731,6 +843,83 @@ class SlackThreadBot:
 
         return time_str
 
+    def _get_help_blocks(self) -> list:
+        """Generate a detailed help message with all commands."""
+        return [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Slack Thread Bot Help",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Here are the commands you can use:",
+                },
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"• `{self.KEYWORD}`: Copies the entire thread and sends it to you in a direct message.",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"• `{self.GENSTORY_KEYWORD}`: Generates a Jira story from the thread and sends it to you in a direct message.",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"• `{self.ACTIONS_KEYWORD}`: Extracts action items from the thread and posts them as a reply.",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"• `{self.TZ_KEYWORD} <time> [airport_codes]`: Converts a time to different timezones. For example, `!tz 10:30am JFK` or `!tz now SFO, CDG`.",
+                },
+            },
+        ]
+
+    def _format_actions_as_blocks(self, llm_response: str) -> list:
+        """Format the action items into Slack Block Kit."""
+        if not llm_response or llm_response.strip().lower() == "no action items found.":
+            return [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "No action items found.",
+                    },
+                }
+            ]
+
+        action_items = [
+            item.strip() for item in llm_response.split("\n") if item.strip()
+        ]
+        blocks = []
+        for item in action_items:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"• {item}",
+                    },
+                }
+            )
+        return blocks
+
     def _format_tz_results(self, results, emojis):
         """Format the timezone conversion results for Slack."""
         lines = []
@@ -891,6 +1080,10 @@ class SlackThreadBot:
             logger.info(
                 "🤖 Send '%s' in any Slack thread for LLM story generation!",
                 self.GENSTORY_KEYWORD,
+            )
+            logger.info(
+                "✅ Send '%s' in any Slack thread to extract action items!",
+                self.ACTIONS_KEYWORD,
             )
             logger.info(
                 "🕒 Send '%s' in any Slack thread to convert timezones!",

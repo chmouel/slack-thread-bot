@@ -1,0 +1,9 @@
+Given the following Slack thread conversation, please identify and extract any action items. An action item is a specific task, assignment, or commitment that requires someone to take action.
+
+Please format the output as a numbered list of action items. If no action items
+are found, please respond with "No action items found."
+
+Thread:
+```
+{thread_text}
+```

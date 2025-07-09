@@ -85,6 +85,7 @@ If `LLM_PROVIDER` is set to `gemini`, you must provide:
 2. In any message thread, use one of the following commands:
     - `!copyt`: The bot will format and send you a direct message with the entire thread conversation, including a link to the original thread.
     - `!genstory`: The bot will use an LLM (OpenAI or Gemini) to generate a Jira story from the thread conversation and send it to you as a snippet in a direct message. The story will also include a link to the original thread.
+    - `!actions`: The bot will use an LLM to extract a list of action items from the thread and post them as a reply in the thread.
     - `!tz <time> [airport codes]`: The bot will convert the specified time.
         - If airport codes (3-letter IATA codes) are provided, it will convert the time to the corresponding timezones. You can provide multiple codes separated by commas.
         - If no airport codes are provided, it will use the default timezones specified in the `BATZ_TIMEZONES` environment variable.
