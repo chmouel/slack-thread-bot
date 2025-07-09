@@ -1,48 +1,61 @@
 # Slack Thread Bot
 
-A Slack bot that copies thread conversations and formats them for easy sharing.
+A Slack bot that copies thread conversations, generates Jira stories, and formats them for easy sharing.
 
-## Features
+## ✨ Features
 
-- Copy entire thread conversations with the `!copyt` command
-- Generate a Jira story from a thread with the `!genstory` command
-- Clean formatting that removes Slack-specific markup
-- Debug mode for troubleshooting
-- Comprehensive logging
+- Copy entire thread conversations with the `!copyt` command.
+- Generate a Jira story from a thread with the `!genstory` command using OpenAI or Gemini.
+- Includes a permanent link to the original Slack thread in the output.
+- Cleans formatting by removing Slack-specific markup.
+- Debug mode for easy troubleshooting.
+- Comprehensive logging.
 
-## Setup
+## 🚀 Setup & Running
 
-1. Install dependencies:
+1. **Clone the repository:**
 
-   ```bash
-   uv sync
-   ```
+    ```bash
+    git clone https://github.com/chmouel/slack-thread-bot.git
+    cd slack-thread-bot
+    ```
 
-2. Set up environment variables:
+2. **Install dependencies:**
+    This project uses `uv` for package management.
 
-   ```bash
-   cp .env.example .env
-   # Edit .env with your actual Slack tokens
-   ```
+    ```bash
+    uv sync
+    ```
 
-3. Run the bot:
+3. **Configure environment variables:**
+    Copy the example `.env` file and fill in your Slack and LLM provider tokens.
 
-   ```bash
-   python main.py
-   ```
+    ```bash
+    cp .env.example .env
+    ```
 
-## Environment Variables
+    Then edit `.env` with your actual tokens. See the "Environment Variables" section for details.
 
-- `SLACK_BOT_TOKEN`: Your Slack bot token (starts with `xoxb-`)
-- `SLACK_APP_TOKEN`: Your Slack app token (starts with `xapp-`)  
-- `DEBUG`: Enable debug mode (`true`, `1`, `yes`, `on` for enabled)
-- `LLM_PROVIDER`: The desired LLM provider. Can be `openai` (default) or `gemini`.
+4. **Run the bot:**
+
+    ```bash
+    uv run main.py
+    ```
+
+    The bot will connect to Slack and be ready for commands!
+
+## ⚙️ Environment Variables
+
+- `SLACK_BOT_TOKEN`: Your Slack bot token (starts with `xoxb-`).
+- `SLACK_APP_TOKEN`: Your Slack app token (starts with `xapp-`).
+- `DEBUG`: Enable debug mode (`true`, `1`, `yes`, `on` for enabled).
+- `LLM_PROVIDER`: The desired LLM provider. Can be `openai` or `gemini` (default).
 - `OPENAI_API_KEY`: Your OpenAI API key (if using `openai`).
 - `OPENAI_MODEL`: The OpenAI model to use (e.g., `gpt-3.5-turbo`).
 - `GEMINI_API_KEY`: Your Gemini API key (if using `gemini`).
-- `GEMINI_MODEL`: The Gemini model to use (e.g., `gemini-pro`).
+- `GEMINI_MODEL`: The Gemini model to use (defaults to `gemini-2.5-flash`).
 
-## LLM Integration
+## 🤖 LLM Integration
 
 This bot can integrate with either OpenAI or Gemini to generate Jira stories from Slack threads using the `!genstory` command.
 
@@ -62,7 +75,26 @@ If `LLM_PROVIDER` is set to `gemini`, you must provide:
 - `GEMINI_API_KEY`: Your Google AI Studio API key.
 - `GEMINI_MODEL`: (Optional) The model to use (defaults to `gemini-pro`).
 
-## Debug Mode
+## 🛠️ Usage
+
+1. Invite the bot to your Slack channel.
+2. In any message thread, use one of the following commands:
+    - `!copyt`: The bot will format and send you a direct message with the entire thread conversation, including a link to the original thread.
+    - `!genstory`: The bot will use an LLM (OpenAI or Gemini) to generate a Jira story from the thread conversation and send it to you as a snippet in a direct message. The story will also include a link to the original thread.
+
+## 🔐 Slack App Permissions
+
+For the bot to function correctly, your Slack App needs the following permissions (scopes):
+
+- **`channels:history`**: View messages in public channels the bot is in.
+- **`groups:history`**: View messages in private channels the bot is in.
+- **`chat:write`**: Send messages as the bot.
+- **`files:write`**: Upload files as snippets for DMs.
+- **`im:write`**: Start direct messages with users.
+- **`reactions:write`**: Add emoji reactions to messages.
+- **`users:read`**: View user information to resolve display names.
+
+## 🐛 Debug Mode
 
 Enable debug mode by setting the `DEBUG` environment variable:
 
@@ -79,23 +111,17 @@ DEBUG=true python main.py
 
 Debug mode provides:
 
-- Detailed logging to console and `slack-bot.log` file
-- Step-by-step processing information
-- Environment variable validation
-- Enhanced error messages with stack traces
+- Detailed logging to console and `/tmp/slack-bot-debug.log` file.
+- Step-by-step processing information.
+- Environment variable validation.
+- Enhanced error messages with stack traces.
 
-## Usage
-
-1. Invite the bot to your Slack channel
-2. In any message thread, type `!copy-thread`
-3. The bot will format and return the entire thread conversation
-4. Copy the formatted text for sharing elsewhere
-
-## Troubleshooting
+## 🔍 Troubleshooting
 
 If the bot doesn't respond:
 
-1. Enable debug mode to see detailed logs
-2. Check that environment variables are set correctly
-3. Verify the bot has proper permissions in your Slack workspace
-4. Check the console output for error messages
+1. Enable debug mode to see detailed logs.
+2. Check that all required environment variables are set correctly.
+3. Verify the bot has the correct permissions in your Slack workspace (see above).
+4. Check the console output for error messages.
+

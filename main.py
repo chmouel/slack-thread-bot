@@ -476,7 +476,7 @@ class SlackThreadBot:
 
     def call_llm(self, prompt: str) -> str | None:
         """Call the configured LLM provider."""
-        llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+        llm_provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
         if llm_provider == "gemini":
             return self.call_gemini(prompt)
         if llm_provider == "openai":
@@ -533,7 +533,7 @@ class SlackThreadBot:
             logger.error("GEMINI_API_KEY environment variable not set")
             return None
         genai.configure(api_key=api_key)
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-pro")
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         model = genai.GenerativeModel(model_name)
         logger.info("Calling Gemini with model %s", model_name)
         try:
