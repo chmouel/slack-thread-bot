@@ -129,9 +129,7 @@ class SlackThreadBot:
                 e,
             )
 
-    def handle_copy_thread(
-        self, message, client
-    ):  # pylint: disable=too-many-positional-arguments
+    def handle_copy_thread(self, message, client):  # pylint: disable=too-many-positional-arguments
         """Handle the !copyt command to copy thread conversations"""
         user = message.get("user")
         if user:
@@ -201,6 +199,9 @@ class SlackThreadBot:
 
             # Add thread URL to the top of the prompt
             thread_link = self._get_thread_link(channel, thread_ts)
+            if thread_link:
+                logger.info("Generated thread link: %s", thread_link)
+                prompt = f"Source Thread: {thread_link}\n{prompt}"
 
             # Send as snippet to direct message
             user_id = message.get("user")
@@ -349,9 +350,7 @@ class SlackThreadBot:
         )
         return result
 
-    def handle_genstory(
-        self, message, client
-    ):  # pylint: disable=too-many-positional-arguments
+    def handle_genstory(self, message, client):  # pylint: disable=too-many-positional-arguments
         """Handle the !genstory command to generate a Jira story from thread"""
         user = message.get("user")
         if user:
@@ -409,6 +408,8 @@ class SlackThreadBot:
             # Format messages into prompt for LLM
             thread_text = self.format_thread_as_prompt(filtered_messages, client)
             thread_link = self._get_thread_link(channel, thread_ts)
+            if thread_link:
+                logger.info("Generated thread link: %s", thread_link)
 
             jira_prompt = (
                 "Given the following Slack thread conversation, generate a Jira story in Jira format. "
