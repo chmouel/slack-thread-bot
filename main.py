@@ -271,6 +271,19 @@ class SlackThreadBot:
             if DEBUG_MODE:
                 logger.debug("Received message event: %s", body)
 
+    def _send_dm(self, client, user_id: str, text: str):
+        """Send a direct message to a user."""
+        if not user_id:
+            logger.warning("Cannot send DM, user_id is missing.")
+            return
+        try:
+            dm_response = client.conversations_open(users=user_id)
+            dm_channel = dm_response["channel"]["id"]
+            client.chat_postMessage(channel=dm_channel, text=text)
+            logger.info("Sent DM to user %s", user_id)
+        except Exception as e:
+            logger.error("Failed to send DM to user %s: %s", user_id, e)
+
     def handle_copy_thread(self, message, say, client):
         """Handle the !copyt command to copy thread conversations"""
         user = message.get("user")
@@ -311,7 +324,7 @@ class SlackThreadBot:
             messages = result.get("messages", [])
             if not messages:
                 logger.warning("No messages found in thread")
-                say("❌ No messages found in this thread.")
+                self._send_dm(client, user, "❌ No messages found in this thread.")
                 return
 
             # Filter out the command message itself
@@ -329,12 +342,15 @@ class SlackThreadBot:
 
             if not filtered_messages:
                 logger.warning("No messages found in thread after filtering command")
-                say("❌ No conversation found in this thread (only command message).")
+                self._send_dm(
+                    client,
+                    user,
+                    "❌ No conversation found in this thread (only command message).",
+                )
                 return
 
             # Format messages into prompt
             prompt = self.format_thread_as_prompt(filtered_messages, client)
-
             if DEBUG_MODE:
                 logger.debug("Formatted prompt length: %d characters", len(prompt))
 
@@ -365,10 +381,7 @@ class SlackThreadBot:
                     acknowledgment = (
                         "✅ Thread copied! Check your DMs for an easy-to-copy snippet."
                     )
-                    if message.get("thread_ts"):
-                        say(acknowledgment, thread_ts=message.get("thread_ts"))
-                    else:
-                        say(acknowledgment, thread_ts=message["ts"])
+                    self._send_dm(client, user_id, acknowledgment)
 
                     logger.info(
                         "Successfully sent thread snippet to user %s via DM",
@@ -388,7 +401,7 @@ class SlackThreadBot:
         except Exception as e:
             error_msg = f"Error processing thread: {str(e)}"
             logger.error(error_msg, exc_info=DEBUG_MODE)
-            say(f"❌ {error_msg}")
+            self._send_dm(client, user, f"❌ {error_msg}")
             if DEBUG_MODE:
                 raise  # Re-raise in debug mode for full traceback
 
@@ -507,7 +520,7 @@ class SlackThreadBot:
             messages = result.get("messages", [])
             if not messages:
                 logger.warning("No messages found in thread")
-                say("❌ No messages found in this thread.")
+                self._send_dm(client, user, "❌ No messages found in this thread.")
                 return
 
             # Filter out the command message itself
@@ -526,7 +539,11 @@ class SlackThreadBot:
 
             if not filtered_messages:
                 logger.warning("No messages found in thread after filtering command")
-                say("❌ No conversation found in this thread (only command message).")
+                self._send_dm(
+                    client,
+                    user,
+                    "❌ No conversation found in this thread (only command message).",
+                )
                 return
 
             # Format messages into prompt for LLM
@@ -539,13 +556,18 @@ class SlackThreadBot:
             )
             llm_response = self.call_llm(jira_prompt)
             if not llm_response:
-                say("❌ Failed to check for duplicate Jira issues from thread.")
+                self._send_dm(
+                    client,
+                    user,
+                    "❌ Failed to check for duplicate Jira issues from thread.",
+                )
                 return
 
             # Post the result directly in the thread
-            say(
+            self._send_dm(
+                client,
+                user,
                 f"🔎 Potential duplicate Jira issues (via LLM):\n{llm_response}",
-                thread_ts=thread_ts,
             )
             logger.info(
                 "Posted potential duplicate Jira issues for thread %s", thread_ts
@@ -554,7 +576,7 @@ class SlackThreadBot:
         except Exception as e:
             error_msg = f"Error checking for duplicate Jira issues: {str(e)}"
             logger.error(error_msg, exc_info=DEBUG_MODE)
-            say(f"❌ {error_msg}")
+            self._send_dm(client, user, f"❌ {error_msg}")
             if DEBUG_MODE:
                 raise  # Re-raise in debug mode for full traceback
 
@@ -593,7 +615,7 @@ class SlackThreadBot:
             messages = result.get("messages", [])
             if not messages:
                 logger.warning("No messages found in thread")
-                say("❌ No messages found in this thread.")
+                self._send_dm(client, user, "❌ No messages found in this thread.")
                 return
 
             # Filter out the command message itself
@@ -610,7 +632,11 @@ class SlackThreadBot:
 
             if not filtered_messages:
                 logger.warning("No messages found in thread after filtering command")
-                say("❌ No conversation found in this thread (only command message).")
+                self._send_dm(
+                    client,
+                    user,
+                    "❌ No conversation found in this thread (only command message).",
+                )
                 return
 
             # Format messages into prompt for LLM
@@ -629,7 +655,9 @@ class SlackThreadBot:
             # Call LLM (either via MCP or direct HTTP)
             llm_response = self.call_llm(jira_prompt)
             if not llm_response:
-                say("❌ Failed to generate Jira story from thread.")
+                self._send_dm(
+                    client, user, "❌ Failed to generate Jira story from thread."
+                )
                 return
 
             # Send the generated Jira story as a snippet to the user via DM
@@ -652,10 +680,7 @@ class SlackThreadBot:
                     acknowledgment = (
                         "✅ Jira story generated! Check your DMs for the result."
                     )
-                    if message.get("thread_ts"):
-                        say(acknowledgment, thread_ts=message.get("thread_ts"))
-                    else:
-                        say(acknowledgment, thread_ts=message["ts"])
+                    self._send_dm(client, user_id, acknowledgment)
                     logger.info(
                         "Successfully sent Jira story to user %s via DM",
                         display_name,
@@ -673,7 +698,7 @@ class SlackThreadBot:
         except Exception as e:
             error_msg = f"Error generating Jira story: {str(e)}"
             logger.error(error_msg, exc_info=DEBUG_MODE)
-            # say(f"❌ {error_msg}")
+            self._send_dm(client, user, f"❌ {error_msg}")
             if DEBUG_MODE:
                 raise  # Re-raise in debug mode for full traceback
 
