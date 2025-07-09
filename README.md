@@ -55,6 +55,9 @@ A Slack bot that copies thread conversations, generates Jira stories, and format
 - `GEMINI_API_KEY`: Your Gemini API key (if using `gemini`).
 - `GEMINI_MODEL`: The Gemini model to use (defaults to `gemini-2.5-flash`).
 - `CACHE_STORY_DIR`: (Optional) If set, the generated user story will be cached to this directory.
+- `BATZ_BASE_TZ`: (Optional) The base timezone for the `!tz` command. Defaults to `UTC`.
+- `BATZ_TIMEZONES`: (Optional) A comma-separated list of timezones for the `!tz` command, in `Name/Area/City` format.
+- `BATZ_EMOJIS`: (Optional) A comma-separated list of city-to-emoji mappings for the `!tz` command, in `Name/emoji` format.
 
 ## 🤖 LLM Integration
 
@@ -82,6 +85,7 @@ If `LLM_PROVIDER` is set to `gemini`, you must provide:
 2. In any message thread, use one of the following commands:
     - `!copyt`: The bot will format and send you a direct message with the entire thread conversation, including a link to the original thread.
     - `!genstory`: The bot will use an LLM (OpenAI or Gemini) to generate a Jira story from the thread conversation and send it to you as a snippet in a direct message. The story will also include a link to the original thread.
+    - `!tz <time>`: The bot will convert the specified time across a pre-configured set of timezones and post the results in the thread. For example: `!tz 10:30am tomorrow`.
 
 ## 🔐 Slack App Permissions
 

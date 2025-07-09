@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import re
+import subprocess
 import sys
 from typing import Dict
 
@@ -70,12 +71,15 @@ class SlackThreadBot:
 
     KEYWORD = "!copyt"  # Command to trigger thread copying
     GENSTORY_KEYWORD = "!genstory"  # Command to trigger Jira story generation
+    TZ_KEYWORD = "!tz"  # Command to trigger timezone conversion
 
     def __init__(self, bot_token: str, app_token: str):
         self.bot_token = bot_token
         self.app_token = app_token
         self.user_cache: Dict[str, str] = {}  # Cache for user display names
+        self.user_tz_cache: Dict[str, str] = {}  # Cache for user timezones
         self.team_url: str | None = None
+        self._date_command: str | None = None
 
         # Initialize Slack app with debug logging
         self.app = App(token=bot_token, logger=logger if DEBUG_MODE else None)
@@ -96,6 +100,10 @@ class SlackThreadBot:
         def genstory_handler(message, client):
             self.handle_genstory(message, client)
 
+        @self.app.message(self.TZ_KEYWORD)
+        def tz_handler(message, client):
+            self.handle_tz(message, client)
+
         @self.app.event("message")
         def handle_message_events(body):
             if DEBUG_MODE:
@@ -115,12 +123,24 @@ class SlackThreadBot:
             logger.error("Failed to send DM to user %s: %s", user_id, e)
 
     def _update_reaction(self, client, channel, ts, emoji_name, add=True):
-        """Add or remove a reaction from a message."""
+        # pylint: disable=too-many-nested-blocks
         try:
             if add:
                 client.reactions_add(channel=channel, name=emoji_name, timestamp=ts)
             else:
-                client.reactions_remove(channel=channel, name=emoji_name, timestamp=ts)
+                # Remove only if the bot user added the reaction
+                user_id = client.auth_test()["user_id"]
+                reactions_info = client.reactions_get(channel=channel, timestamp=ts)
+                message = reactions_info.get("message", {})
+                reactions = message.get("reactions", [])
+                for reaction in reactions:
+                    if reaction.get("name") == emoji_name:
+                        for user in reaction.get("users", []):
+                            if user == user_id:
+                                client.reactions_remove(
+                                    channel=channel, name=emoji_name, timestamp=ts
+                                )
+                                break
         except Exception as e:
             logger.warning(
                 "Failed to %s reaction '%s': %s",
@@ -319,6 +339,36 @@ class SlackThreadBot:
             self.user_cache[user_id] = fallback_name
             return fallback_name
 
+    def get_user_timezone(self, client, user_id: str) -> str | None:
+        """Get the timezone for a user ID with caching."""
+        if not user_id or user_id == "Unknown":
+            return None
+
+        if user_id in self.user_tz_cache:
+            logger.debug(
+                "Using cached timezone for user %s: %s",
+                user_id,
+                self.user_tz_cache[user_id],
+            )
+            return self.user_tz_cache[user_id]
+
+        try:
+            result = client.users_info(user=user_id)
+            user_info = result.get("user", {})
+            timezone = user_info.get("tz")
+
+            if timezone:
+                self.user_tz_cache[user_id] = timezone
+                logger.debug(
+                    "Resolved and cached user %s timezone: %s", user_id, timezone
+                )
+                return timezone
+
+        except Exception as e:
+            logger.debug("Failed to get timezone for user %s: %s", user_id, e)
+
+        return None
+
     def format_thread_as_prompt(self, messages, client) -> str:
         """Format thread messages into a readable prompt"""
         logger.debug("Formatting %d messages into prompt", len(messages))
@@ -496,6 +546,127 @@ class SlackThreadBot:
                 client, channel, ts, "hourglass_flowing_sand", add=False
             )
 
+    def handle_tz(self, message, client):
+        """Handle the !tz command to convert timezones."""
+        user_id = message.get("user")
+        display_name = self.get_user_display_name(client, user_id)
+        logger.info(
+            "Received %s command from user %s (ID: %s)",
+            self.TZ_KEYWORD,
+            display_name,
+            user_id,
+        )
+
+        channel = message["channel"]
+        ts = message["ts"]
+        thread_ts = message.get("thread_ts", ts)
+
+        # Extract time argument from the message
+        command_text = message.get("text", "").strip()
+        time_arg = command_text[len(self.TZ_KEYWORD) :].strip()
+
+        if not time_arg:
+            time_arg = "now"
+
+        # Convert 10h00 to 10:00 for compatibility
+        time_arg = re.sub(r"(\d+)h(\d+)", r"\1:\2", time_arg)
+
+        self._update_reaction(client, channel, ts, "hourglass_flowing_sand")
+
+        try:
+            # Get the user's timezone, falling back to environment or UTC
+            user_tz = self.get_user_timezone(client, user_id)
+            base_tz = user_tz or os.environ.get("BATZ_BASE_TZ", "UTC")
+
+            timezones_str = os.environ.get(
+                "BATZ_TIMEZONES",
+                "Bangalore/Asia/Kolkata,Paris/Europe/Paris,Boston/America/New_York",
+            )
+            timezones = dict(item.split("/", 1) for item in timezones_str.split(","))
+
+            # Get emoji mappings from environment
+            emojis_str = os.environ.get("BATZ_EMOJIS", "")
+            emojis = (
+                dict(item.split("/", 1) for item in emojis_str.split(","))
+                if emojis_str
+                else {}
+            )
+
+            results = []
+            for name, tz in timezones.items():
+                converted_time, error = self._convert_time_with_date(
+                    time_arg, base_tz, tz
+                )
+                if error:
+                    raise ValueError(f"Failed to convert time for {tz}: {error}")
+                results.append({"name": name, "time": converted_time, "tz": tz})
+
+            # Format and send the response
+            response_text = self._format_tz_results(results, emojis)
+            client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts, text=response_text
+            )
+            self._update_reaction(client, channel, ts, "white_check_mark", add=False)
+            logger.info(
+                "Successfully sent timezone conversion to user %s in channel %s",
+                display_name,
+                channel,
+            )
+
+        except Exception as e:
+            error_msg = f"Error converting timezones: {e}"
+            logger.error(error_msg, exc_info=DEBUG_MODE)
+            self._send_dm(client, user_id, f"❌ {error_msg}")
+            self._update_reaction(client, channel, ts, "x")
+        finally:
+            self._update_reaction(
+                client, channel, ts, "hourglass_flowing_sand", add=False
+            )
+
+    def _convert_time_with_date(self, time_str, base_tz, target_tz):
+        """Convert time using GNU date command, detecting gdate if available."""
+        # Try to find GNU date command
+        date_cmd = "date"
+        date_format = "+%a %Y-%m-%d %H:%M:%S %Z"
+
+        try:
+            if time_str and time_str.strip():
+                # Convert specific time from base_tz to target_tz
+                # Equivalent to: TZ="${target_tz}" date --date="TZ=\"${base_tz}\" ${time_str}" "+${date_format}"
+                command = [date_cmd, f'--date=TZ="{base_tz}" {time_str}', date_format]
+                env = {"TZ": target_tz}
+            else:
+                # Just show current time in target timezone
+                # Equivalent to: TZ="${target_tz}" date "+${date_format}"
+                command = [date_cmd, date_format]
+                env = {"TZ": target_tz}
+
+            process = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            return process.stdout.strip(), None
+        except FileNotFoundError:
+            return (
+                None,
+                f"`{date_cmd}` not found. Please install GNU date (e.g., `brew install coreutils` on macOS).",
+            )
+        except subprocess.CalledProcessError as e:
+            error_message = e.stderr.strip()
+            return None, f"Error executing `{date_cmd}`: {error_message}"
+
+    def _format_tz_results(self, results, emojis):
+        """Format the timezone conversion results for Slack."""
+        lines = []
+        for res in results:
+            emoji = emojis.get(res["name"], "")
+            emoji_space = " " if emoji else ""
+            lines.append(f"• {emoji}{emoji_space}*{res['name']}*: {res['time']}")
+        return "\n".join(lines)
+
     def call_llm(self, prompt: str) -> str | None:
         """Call the configured LLM provider."""
         llm_provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
@@ -647,6 +818,10 @@ class SlackThreadBot:
             logger.info(
                 "🤖 Send '%s' in any Slack thread for LLM story generation!",
                 self.GENSTORY_KEYWORD,
+            )
+            logger.info(
+                "🕒 Send '%s' in any Slack thread to convert timezones!",
+                self.TZ_KEYWORD,
             )
 
             llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
