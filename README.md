@@ -4,7 +4,8 @@ A Slack bot that copies thread conversations and formats them for easy sharing.
 
 ## Features
 
-- Copy entire thread conversations with the `!copy-thread` command
+- Copy entire thread conversations with the `!copyt` command
+- Generate a Jira story from a thread with the `!genstory` command
 - Clean formatting that removes Slack-specific markup
 - Debug mode for troubleshooting
 - Comprehensive logging
