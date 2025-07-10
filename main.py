@@ -96,6 +96,86 @@ class SlackThreadBot:
     def _register_handlers(self):
         """Register all Slack event handlers"""
 
+        @self.app.event("app_home_opened")
+        def handle_app_home_opened_events(client, event, logger):
+            """Handle the app_home_opened event to display a help interface."""
+            user_id = event["user"]
+            logger.info(f"App home opened by user {user_id}")
+            try:
+                help_blocks = self._get_help_blocks(user_id)
+                client.views_publish(
+                    user_id=user_id,
+                    view={
+                        "type": "home",
+                        "blocks": help_blocks,
+                    },
+                )
+                logger.info(f"Successfully published App Home view for user {user_id}")
+            except Exception as e:
+                logger.error(f"Error publishing App Home view for user {user_id}: {e}")
+
+        @self.app.action("show_tz_examples")
+        def handle_show_tz_examples(ack, body, client, logger):
+            """Handle the 'show_tz_examples' button click and open a modal."""
+            ack()
+            try:
+                logger.info(
+                    "Opening !tz examples modal for user %s", body["user"]["id"]
+                )
+                client.views_open(
+                    trigger_id=body["trigger_id"],
+                    view={
+                        "type": "modal",
+                        "title": {
+                            "type": "plain_text",
+                            "text": f"{self.TZ_KEYWORD} Examples",
+                        },
+                        "close": {"type": "plain_text", "text": "Close"},
+                        "blocks": [
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"The `{self.TZ_KEYWORD}` command is highly flexible. Here are some examples to get you started:",
+                                },
+                            },
+                            {"type": "divider"},
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": "*Basic Conversions:*\n"
+                                    "• `!tz 10h00`\n"
+                                    "• `!tz 10:30 tomorrow`\n"
+                                    "• `!tz 5pm next monday`\n"
+                                    "• `!tz now` (or just `!tz`)",
+                                },
+                            },
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": "*Using Airport Codes (IATA):*\n"
+                                    "• `!tz 10h00 BLR,CDG`\n"
+                                    "• `!tz tomorrow 10:00 JFK`\n"
+                                    "• `!tz 2pm SFO`",
+                                },
+                            },
+                            {
+                                "type": "context",
+                                "elements": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": "You can use multiple airport codes separated by spaces or commas.",
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                )
+            except Exception as e:
+                logger.error("Failed to open modal: %s", e)
+
         @self.app.message(re.compile(f"^{re.escape(self.KEYWORD)}"))
         def copy_thread_handler(message, client):
             self.handle_copy_thread(message, client)
@@ -843,51 +923,105 @@ class SlackThreadBot:
 
         return time_str
 
-    def _get_help_blocks(self) -> list:
+    def _get_help_blocks(self, user_id: str | None = None) -> list:
         """Generate a detailed help message with all commands."""
+        welcome_text = (
+            f"👋 Hi <@{user_id}>! I'm your friendly Slack Thread Bot."
+            if user_id
+            else "Slack Thread Bot Help"
+        )
         return [
             {
-                "type": "header",
-                "text": {
-                    "type": "plain_text",
-                    "text": "Slack Thread Bot Help",
-                },
+                "type": "image",
+                "image_url": "https://storage.googleapis.com/chmouel-public-images/slack-thread-bot/slack-thread-bot.png",
+                "alt_text": "A friendly robot banner",
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "Here are the commands you can use:",
+                    "text": f"{welcome_text}\nI'm here to help you work with Slack threads more efficiently. Here are the commands you can use:",
                 },
             },
             {"type": "divider"},
             {
-                "type": "section",
+                "type": "header",
                 "text": {
-                    "type": "mrkdwn",
-                    "text": f"• `{self.KEYWORD}`: Copies the entire thread and sends it to you in a direct message.",
+                    "type": "plain_text",
+                    "text": "📋 Core Commands",
                 },
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"• `{self.GENSTORY_KEYWORD}`: Generates a Jira story from the thread and sends it to you in a direct message.",
+                    "text": f"*`{self.KEYWORD}`*\nCopies the entire thread and sends it to you in a direct message as a text snippet.",
+                },
+                "accessory": {
+                    "type": "image",
+                    "image_url": "https://storage.googleapis.com/chmouel-public-images/slack-thread-bot/copy.png",
+                    "alt_text": "Copy icon",
                 },
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"• `{self.ACTIONS_KEYWORD}`: Extracts action items from the thread and posts them as a reply.",
+                    "text": f"*`{self.GENSTORY_KEYWORD}`*\nUses AI to generate a Jira story from the thread and DMs it to you.",
+                },
+                "accessory": {
+                    "type": "image",
+                    "image_url": "https://storage.googleapis.com/chmouel-public-images/slack-thread-bot/ai.png",
+                    "alt_text": "AI icon",
                 },
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"• `{self.TZ_KEYWORD} <time> [airport_codes]`: Converts a time to different timezones. For example, `!tz 10:30am JFK` or `!tz now SFO, CDG`.",
+                    "text": f"*`{self.ACTIONS_KEYWORD}`*\nUses AI to extract a concise list of action items and posts them as a reply in the thread.",
                 },
+                "accessory": {
+                    "type": "image",
+                    "image_url": "https://storage.googleapis.com/chmouel-public-images/slack-thread-bot/checklist.png",
+                    "alt_text": "Checklist icon",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*`{self.TZ_KEYWORD}`*\nConverts a time to different timezones.",
+                },
+                "accessory": {
+                    "type": "image",
+                    "image_url": "https://storage.googleapis.com/chmouel-public-images/slack-thread-bot/timezone.png",
+                    "alt_text": "Timezone icon",
+                },
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Show Timezone Examples",
+                            "emoji": True,
+                        },
+                        "action_id": "show_tz_examples",
+                    }
+                ],
+            },
+            {"type": "divider"},
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "For more details, check out the <https://github.com/chmouel/slack-thread-bot|source code on GitHub>.",
+                    }
+                ],
             },
         ]
 

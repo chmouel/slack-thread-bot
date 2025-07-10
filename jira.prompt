@@ -28,14 +28,14 @@ h2. *Dependencies*
 
 _<Describes what this story depends on. Dependent Stories and EPICs should be linked to the story.>_
 
- 
+
 h2. *Acceptance Criteria  (Mandatory)*
 
 _<Describe edge cases to consider when implementing the story and defining tests>_
 
 _<Provides a required and minimum list of acceptance tests for this story. More is expected as the engineer implements this story>_
 
- 
+
 h1. *INVEST Checklist*
 
  Dependencies identified
@@ -55,7 +55,7 @@ h4. *Legend*
 
  Unsatisfied
 
- 
+
 h2. *Done Checklist*
  * Code is completed, reviewed, documented and checked in
  * Unit and integration test automation have been delivered and running cleanly in continuous integration/staging/canary environment
